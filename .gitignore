@@ -1,0 +1,11 @@
+venv/
+__pycache__/
+*.pyc
+.env
+
+# yt-dlp cache, if you ever point it at a local folder instead of tempfile
+*.mp4
+*.webm
+*.mkv
+*.m4a
+*.part
