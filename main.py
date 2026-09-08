@@ -1,130 +1,79 @@
-"""
-Personal video-download backend.
-
-Wraps yt-dlp behind a small HTTP API so your own mobile app can call it.
-This is meant to run on a machine YOU control (home computer, Raspberry Pi,
-or a personal VPS) and be reached only from your own devices — see the
-README for how to lock it down with a key + Tailscale.
-"""
-
-import os
-import re
-import tempfile
-import uuid
-
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse, RedirectResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+from typing import Optional
 import yt_dlp
+import os
 
 app = FastAPI(title="Personal Video Downloader")
 
-# Strips terminal color codes (e.g. "\x1b[0;31m") that yt-dlp includes in some
-# error messages -- harmless in a terminal, but ugly/broken if shown in a browser.
-_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
-
-
-def _clean_error(e: Exception) -> str:
-    return _ANSI_RE.sub("", str(e))
-
-
-# If you've added a cookies.txt (exported while logged into a site like X),
-# every request automatically uses it. If the file isn't there, everything
-# just falls back to anonymous access like before -- nothing breaks either way.
-COOKIE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cookies.txt")
-
-
-def _ydl_opts(extra: dict) -> dict:
-    opts = {"quiet": True, "no_color": True, "noplaylist": True, **extra}
-    if os.path.exists(COOKIE_FILE):
-        opts["cookiefile"] = COOKIE_FILE
-    return opts
-
-# Simple shared-secret so random people can't hit your server if it's ever
-# reachable from outside your own devices. Set a long random value via env var:
-#   export DOWNLOADER_API_KEY="something-long-and-random"
-API_KEY = os.environ.get("DOWNLOADER_API_KEY", "change-me")
-
-DOWNLOAD_DIR = tempfile.gettempdir()
-
-
-class ExtractRequest(BaseModel):
+# Request schema to accept user settings from the UI
+class DownloadRequest(BaseModel):
     url: str
-
-
-def _check_key(key: str) -> None:
-    if key != API_KEY:
-        raise HTTPException(status_code=401, detail="Invalid API key")
-
+    format_type: str = "mp4"  # "mp4" or "mp3"
+    quality: str = "best"     # "1080", "720", "480", or "best"
 
 @app.post("/extract")
-def extract(req: ExtractRequest, key: str = Query(...)):
-    """Look up a URL and return available formats without downloading anything."""
-    _check_key(key)
-
-    ydl_opts = _ydl_opts({"skip_download": True})
+def extract_info(request: DownloadRequest):
+    """Fetches video metadata before downloading."""
+    ydl_opts = {
+        'quiet': True,
+        'cookiefile': 'cookies.txt' if os.path.exists('cookies.txt') else None[span_5](start_span)[span_5](end_span)
+    }
+    
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(req.url, download=False)
+            info = ydl.extract_info(request.url, download=False)
+            return {
+                "title": info.get("title"),
+                "thumbnail": info.get("thumbnail"),
+                "duration": info.get("duration"),
+                "uploader": info.get("uploader")
+            }
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Couldn't read that URL: {_clean_error(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
 
-    formats = [
-        {
-            "format_id": f.get("format_id"),
-            "ext": f.get("ext"),
-            "resolution": f.get("resolution") or f.get("format_note"),
-            "filesize": f.get("filesize") or f.get("filesize_approx"),
-        }
-        for f in info.get("formats", [])
-        if f.get("vcodec") not in (None, "none")  # skip audio-only entries
-    ]
+@app.post("/download")
+def start_download(request: DownloadRequest):
+    """Downloads video or audio based on user quality and format settings."""
+    out_dir = "downloads"
+    os.makedirs(out_dir, exist_ok=True)
+    
+    # Configure format string based on user settings
+    if request.format_type == "mp3":
+        format_spec = "bestaudio/best"
+        postprocessors = [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192',
+        }]
+    else:
+        postprocessors = []
+        if request.quality == "1080":
+            format_spec = "bestvideo[height<=1080]+bestaudio/best[height<=1080]"
+        elif request.quality == "720":
+            format_spec = "bestvideo[height<=720]+bestaudio/best[height<=720]"
+        else:
+            format_spec = "best"
 
-    return {
-        "title": info.get("title"),
-        "thumbnail": info.get("thumbnail"),
-        "duration": info.get("duration"),
-        "formats": formats,
+    ydl_opts = {
+        'format': format_spec,
+        'outtmpl': f'{out_dir}/%(title)s.%(ext)s',
+        'postprocessors': postprocessors,
+        'cookiefile': 'cookies.txt' if os.path.exists('cookies.txt') else None[span_6](start_span)[span_6](end_span)
     }
 
-
-@app.get("/download")
-def download(url: str, format_id: str = "best", key: str = Query(...)):
-    """Download the chosen format and hand the file back to the app."""
-    _check_key(key)
-
-    file_id = str(uuid.uuid4())
-    outtmpl = os.path.join(DOWNLOAD_DIR, f"{file_id}.%(ext)s")
-
-    ydl_opts = _ydl_opts({"format": format_id, "outtmpl": outtmpl})
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
+            info = ydl.extract_info(request.url, download=True)
             filename = ydl.prepare_filename(info)
+            if request.format_type == "mp3":
+                filename = os.path.splitext(filename)[0] + ".mp3"
+                
+            return {
+                "status": "success",
+                "filename": os.path.basename(filename),
+                "path": filename
+            }
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Download failed: {_clean_error(e)}")
-
-    if not os.path.exists(filename):
-        raise HTTPException(status_code=500, detail="File missing after download")
-
-    return FileResponse(filename, filename=os.path.basename(filename))
-
-
-@app.get("/health")
-def health():
-    return {"status": "ok"}
-
-
-@app.get("/share-target")
-def share_target(url: str = "", text: str = ""):
-    """Android's Web Share Target sends the shared link here; bounce it to the
-    main page with the URL pre-filled so sharing from another app just works."""
-    shared = url or text
-    return RedirectResponse(f"/?url={shared}")
-
-
-# Serves static/index.html at "/" plus manifest.json and sw.js.
-# Mounted last so it never shadows the API routes above.
-app.mount("/", StaticFiles(directory="static", html=True), name="static")
+        raise HTTPException(status_code=500, detail=str(e))
 

@@ -1,198 +1,97 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<meta name="theme-color" content="#111111" />
-<title>Video Downloader</title>
-<link rel="manifest" href="/manifest.json" />
-<style>
-  :root { color-scheme: dark; }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0;
-    font-family: -apple-system, Roboto, Helvetica, Arial, sans-serif;
-    background: #111214;
-    color: #f0f0f0;
-    padding: 20px 16px 60px;
-  }
-  h1 { font-size: 20px; margin: 0 0 16px; }
-  .row { display: flex; gap: 8px; margin-bottom: 12px; }
-  input[type="text"] {
-    flex: 1;
-    padding: 12px;
-    border-radius: 10px;
-    border: 1px solid #333;
-    background: #1c1d20;
-    color: #f0f0f0;
-    font-size: 16px;
-  }
-  button {
-    padding: 12px 18px;
-    border-radius: 10px;
-    border: none;
-    background: #4f8cff;
-    color: white;
-    font-size: 16px;
-    font-weight: 600;
-  }
-  button:active { opacity: 0.8; }
-  #status { min-height: 20px; color: #aaa; margin-bottom: 8px; }
-  #results img {
-    width: 100%;
-    max-width: 320px;
-    border-radius: 10px;
-    display: block;
-    margin: 10px 0;
-  }
-  #results h2 { font-size: 17px; margin: 4px 0; }
-  .formats { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
-  .format-link {
-    display: block;
-    padding: 12px;
-    border-radius: 10px;
-    background: #1c1d20;
-    border: 1px solid #333;
-    color: #f0f0f0;
-    text-decoration: none;
-    font-size: 15px;
-  }
-  .format-link:active { background: #26282c; }
-  #keyRow { font-size: 13px; color: #888; margin-top: 24px; }
-  #keyRow button { font-size: 12px; padding: 6px 10px; background: #333; }
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Downloader</title>
+    <link rel="manifest" href="/static/manifest.json">
+    <style>
+        body { font-family: system-ui, sans-serif; max-width: 500px; margin: 2rem auto; padding: 0 1rem; }
+        .card { border: 1px solid #ccc; padding: 1.5rem; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .form-group { margin-bottom: 1rem; }
+        label { display: block; font-weight: bold; margin-bottom: 0.5rem; }
+        input[type="url"], select { width: 100%; padding: 0.5rem; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        button { width: 100%; padding: 0.75rem; background: #0066cc; color: white; border: none; border-radius: 4px; font-size: 1rem; cursor: pointer; }
+        button:disabled { background: #999; }
+        #status { margin-top: 1rem; padding: 0.5rem; border-radius: 4px; text-align: center; }
+        .success { background: #e6ffed; color: #155724; }
+        .error { background: #ffeef0; color: #721c24; }
+    </style>
 </head>
 <body>
-  <h1>🎬 Video Downloader</h1>
+    <div class="card">
+        <h2>Video Downloader</h2>
+        <div class="form-group">
+            <label for="videoUrl">Video URL</label>
+            <input type="url" id="videoUrl" placeholder="https://..." required>
+        </div>
+        <div class="form-group">
+            <label for="formatType">Format</label>
+            <select id="formatType" onchange="toggleQualityDropdown()">
+                <option value="mp4">Video (MP4)</option>
+                <option value="mp3">Audio Only (MP3)</option>
+            </select>
+        </div>
+        <div class="form-group" id="qualityGroup">
+            <label for="quality">Video Quality</label>
+            <select id="quality">
+                <option value="best">Best Available</option>
+                <option value="1080">1080p</option>
+                <option value="720">720p</option>
+                <option value="480">480p</option>
+            </select>
+        </div>
+        <button id="downloadBtn" onclick="startDownload()">Download</button>
+        <div id="status"></div>
+    </div>
 
-  <div class="row">
-    <input type="text" id="urlInput" placeholder="Paste a video link..." autocapitalize="off" autocorrect="off" />
-  </div>
-  <div class="row">
-    <button id="go">Get Info</button>
-  </div>
+    <script>
+        function toggleQualityDropdown() {
+            const format = document.getElementById("formatType").value;
+            const qualityGroup = document.getElementById("qualityGroup");
+            qualityGroup.style.display = (format === "mp3") ? "none" : "block";
+        }
 
-  <div id="status"></div>
-  <div id="results"></div>
+        async function startDownload() {
+            const url = document.getElementById("videoUrl").value;
+            const format_type = document.getElementById("formatType").value;
+            const quality = document.getElementById("quality").value;
+            const btn = document.getElementById("downloadBtn");
+            const status = document.getElementById("status");
 
-  <div id="keyRow">
-    <span id="keyStatus"></span>
-    <button id="changeKey">Change API key</button>
-  </div>
+            if (!url) {
+                status.className = "error";
+                status.innerText = "Please enter a valid URL";
+                return;
+            }
 
-<script>
-const API_KEY_STORAGE = 'downloaderApiKey';
+            btn.disabled = true;
+            status.className = "";
+            status.innerText = "Processing download...";
 
-function getApiKey(forcePrompt) {
-  let key = localStorage.getItem(API_KEY_STORAGE);
-  if (!key || forcePrompt) {
-    key = prompt('Enter your DOWNLOADER_API_KEY (same value you set with export on the server):', key || '');
-    if (key) localStorage.setItem(API_KEY_STORAGE, key);
-  }
-  return key;
-}
+            try {
+                const response = await fetch("/download", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ url, format_type, quality })
+                });
 
-function updateKeyStatus() {
-  const key = localStorage.getItem(API_KEY_STORAGE);
-  document.getElementById('keyStatus').textContent = key ? 'API key saved.' : 'No API key set yet.';
-}
-
-document.getElementById('changeKey').addEventListener('click', () => {
-  getApiKey(true);
-  updateKeyStatus();
-});
-
-async function extract(url) {
-  const key = getApiKey(false);
-  const res = await fetch(`/extract?key=${encodeURIComponent(key)}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ url })
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || 'Request failed');
-  }
-  return res.json();
-}
-
-function formatSize(bytes) {
-  if (!bytes) return '';
-  return (bytes / 1024 / 1024).toFixed(1) + ' MB';
-}
-
-function renderResults(data, url) {
-  const key = getApiKey(false);
-  const el = document.getElementById('results');
-  el.innerHTML = '';
-
-  const title = document.createElement('h2');
-  title.textContent = data.title || 'Untitled';
-  el.appendChild(title);
-
-  if (data.thumbnail) {
-    const img = document.createElement('img');
-    img.src = data.thumbnail;
-    img.alt = '';
-    el.appendChild(img);
-  }
-
-  const list = document.createElement('div');
-  list.className = 'formats';
-
-  const formats = (data.formats || []).slice().sort((a, b) => (b.filesize || 0) - (a.filesize || 0));
-
-  if (formats.length === 0) {
-    const a = document.createElement('a');
-    a.className = 'format-link';
-    a.textContent = 'Download best available quality';
-    a.href = `/download?url=${encodeURIComponent(url)}&format_id=best&key=${encodeURIComponent(key)}`;
-    list.appendChild(a);
-  }
-
-  formats.forEach(f => {
-    const a = document.createElement('a');
-    const label = [f.resolution, f.ext, formatSize(f.filesize)].filter(Boolean).join(' · ');
-    a.className = 'format-link';
-    a.textContent = label || f.format_id;
-    a.href = `/download?url=${encodeURIComponent(url)}&format_id=${encodeURIComponent(f.format_id)}&key=${encodeURIComponent(key)}`;
-    list.appendChild(a);
-  });
-
-  el.appendChild(list);
-}
-
-async function runExtract(url) {
-  if (!url) return;
-  const statusEl = document.getElementById('status');
-  statusEl.textContent = 'Loading...';
-  document.getElementById('results').innerHTML = '';
-  try {
-    const data = await extract(url);
-    statusEl.textContent = '';
-    renderResults(data, url);
-  } catch (e) {
-    statusEl.textContent = 'Error: ' + e.message;
-  }
-}
-
-document.getElementById('go').addEventListener('click', () => {
-  runExtract(document.getElementById('urlInput').value.trim());
-});
-
-// If opened via "Share" from another app, auto-fill and auto-run.
-const params = new URLSearchParams(window.location.search);
-const shared = params.get('url') || params.get('text');
-if (shared) {
-  document.getElementById('urlInput').value = shared;
-  runExtract(shared);
-}
-
-updateKeyStatus();
-
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js').catch(() => {});
-}
-</script>
+                const data = await response.json();
+                if (response.ok) {
+                    status.className = "success";
+                    status.innerText = `Downloaded: ${data.filename}`;
+                } else {
+                    status.className = "error";
+                    status.innerText = `Error: ${data.detail}`;
+                }
+            } catch (err) {
+                status.className = "error";
+                status.innerText = "Failed to communicate with server.";
+            } finally {
+                btn.disabled = false;
+            }
+        }
+    </script>
 </body>
 </html>
+
