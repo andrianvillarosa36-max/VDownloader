@@ -1,79 +1,245 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from typing import Optional
-import yt_dlp
 import os
+import re
+import json
+import asyncio
+import sqlite3
+import shutil
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
+import yt_dlp
 
-app = FastAPI(title="Personal Video Downloader")
+app = FastAPI()
 
-# Request schema to accept user settings from the UI
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+DOWNLOAD_DIR = os.path.join(os.getcwd(), "downloads")
+os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+
+DB_PATH = "vault.db"
+
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS downloads (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT,
+            filename TEXT,
+            format_type TEXT,
+            quality TEXT,
+            downloaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            is_saved_to_phone INTEGER DEFAULT 0
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+init_db()
+
+# WebSocket Manager for Real-Time Progress
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: list[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
+
+    async def broadcast(self, message: str):
+        for connection in list(self.active_connections):
+            try:
+                await connection.send_text(message)
+            except Exception:
+                self.disconnect(connection)
+
+manager = ConnectionManager()
+main_loop = None
+
+@app.on_event("startup")
+async def startup_event():
+    global main_loop
+    main_loop = asyncio.get_running_loop()
+
+@app.websocket("/ws/progress")
+async def websocket_endpoint(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+
 class DownloadRequest(BaseModel):
     url: str
-    format_type: str = "mp4"  # "mp4" or "mp3"
-    quality: str = "best"     # "1080", "720", "480", or "best"
+    format_type: str = "mp4"
+    quality: str = "best"
 
-@app.post("/extract")
-def extract_info(request: DownloadRequest):
-    """Fetches video metadata before downloading."""
-    ydl_opts = {
-        'quiet': True,
-        'cookiefile': 'cookies.txt' if os.path.exists('cookies.txt') else None[span_5](start_span)[span_5](end_span)
-    }
-    
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(request.url, download=False)
-            return {
-                "title": info.get("title"),
-                "thumbnail": info.get("thumbnail"),
-                "duration": info.get("duration"),
-                "uploader": info.get("uploader")
+def clean_ansi(text: str) -> str:
+    """Removes terminal color codes from yt-dlp strings"""
+    return re.sub(r'\x1b\[[0-9;]*m', '', str(text)).strip() if text else ""
+
+def create_progress_hook():
+    def hook(d):
+        if d['status'] == 'downloading':
+            total = d.get('total_bytes') or d.get('total_bytes_estimate') or 0
+            downloaded = d.get('downloaded_bytes', 0)
+            
+            percentage = round((downloaded / total) * 100, 1) if total > 0 else 0
+            speed = clean_ansi(d.get('_speed_str', '0 KB/s'))
+            eta = clean_ansi(d.get('_eta_str', '--'))
+
+            payload = {
+                "status": "downloading",
+                "percentage": percentage,
+                "speed": speed if speed else "Calculating...",
+                "eta": eta if eta else "--"
             }
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+
+            if main_loop and main_loop.is_running():
+                asyncio.run_coroutine_threadsafe(
+                    manager.broadcast(json.dumps(payload)),
+                    main_loop
+                )
+
+        elif d['status'] == 'finished':
+            payload = {"status": "processing", "percentage": 100, "speed": "Done", "eta": "0s"}
+            if main_loop and main_loop.is_running():
+                asyncio.run_coroutine_threadsafe(
+                    manager.broadcast(json.dumps(payload)),
+                    main_loop
+                )
+
+    return hook
+
+@app.get("/")
+def read_root():
+    return FileResponse("static/index.html")
+
+@app.get("/manifest.json")
+def get_manifest():
+    return FileResponse("static/manifest.json", media_type="application/manifest+json")
+
+@app.get("/files/{filename}")
+def get_file(filename: str):
+    file_path = os.path.join(DOWNLOAD_DIR, filename)
+    if os.path.exists(file_path):
+        return FileResponse(file_path)
+    raise HTTPException(status_code=404, detail="File not found")
 
 @app.post("/download")
-def start_download(request: DownloadRequest):
-    """Downloads video or audio based on user quality and format settings."""
-    out_dir = "downloads"
-    os.makedirs(out_dir, exist_ok=True)
-    
-    # Configure format string based on user settings
-    if request.format_type == "mp3":
-        format_spec = "bestaudio/best"
-        postprocessors = [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '192',
-        }]
-    else:
-        postprocessors = []
-        if request.quality == "1080":
-            format_spec = "bestvideo[height<=1080]+bestaudio/best[height<=1080]"
-        elif request.quality == "720":
-            format_spec = "bestvideo[height<=720]+bestaudio/best[height<=720]"
-        else:
-            format_spec = "best"
-
+async def download_video(req: DownloadRequest):
     ydl_opts = {
-        'format': format_spec,
-        'outtmpl': f'{out_dir}/%(title)s.%(ext)s',
-        'postprocessors': postprocessors,
-        'cookiefile': 'cookies.txt' if os.path.exists('cookies.txt') else None[span_6](start_span)[span_6](end_span)
+        'outtmpl': os.path.join(DOWNLOAD_DIR, '%(title)s.%(ext)s'),
+        'progress_hooks': [create_progress_hook()],
+        'quiet': True,
+        'no_warnings': True,
+        'extractor_args': {
+            'twitter': {
+                'api': ['syndication']
+            }
+        }
     }
 
-    try:
+    if req.format_type == "mp3":
+        ydl_opts.update({
+            'format': 'bestaudio/best',
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192',
+            }],
+        })
+    else:
+        if req.quality != "best":
+            ydl_opts['format'] = f"bestvideo[height<={req.quality}]+bestaudio/best[height<={req.quality}]/best"
+        else:
+            ydl_opts['format'] = "best"
+
+    loop = asyncio.get_event_loop()
+    
+    def run_dl():
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(request.url, download=True)
+            info = ydl.extract_info(req.url, download=True)
             filename = ydl.prepare_filename(info)
-            if request.format_type == "mp3":
+            if req.format_type == "mp3":
                 filename = os.path.splitext(filename)[0] + ".mp3"
-                
-            return {
-                "status": "success",
-                "filename": os.path.basename(filename),
-                "path": filename
-            }
+            return os.path.basename(filename), info.get('title', 'Downloaded Media')
+
+    try:
+        filename, title = await loop.run_in_executor(None, run_dl)
+
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO downloads (title, filename, format_type, quality) VALUES (?, ?, ?, ?)",
+            (title, filename, req.format_type, req.quality)
+        )
+        conn.commit()
+        conn.close()
+
+        return {"status": "success", "filename": filename, "title": title}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # Cleans ANSI color tags from error messages
+        clean_error = clean_ansi(str(e))
+        raise HTTPException(status_code=500, detail=clean_error)
+
+@app.get("/history")
+def get_history():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM downloads ORDER BY id DESC")
+    rows = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return rows
+
+@app.post("/save-to-phone/{file_id}")
+def save_to_phone(file_id: int):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT filename FROM downloads WHERE id = ?", (file_id,))
+    row = cursor.fetchone()
+
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    filename = row[0]
+    src_path = os.path.join(DOWNLOAD_DIR, filename)
+    dest_dir = "/sdcard/Download"
+    dest_path = os.path.join(dest_dir, filename)
+
+    if not os.path.exists(src_path):
+        conn.close()
+        raise HTTPException(status_code=404, detail="File deleted from server")
+
+    shutil.copy(src_path, dest_path)
+    cursor.execute("UPDATE downloads SET is_saved_to_phone = 1 WHERE id = ?", (file_id,))
+    conn.commit()
+    conn.close()
+
+    return {"status": "success", "path": dest_path}
+
+@app.delete("/history/{file_id}")
+def delete_history(file_id: int):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT filename FROM downloads WHERE id = ?", (file_id,))
+    row = cursor.fetchone()
+
+    if row:
+        file_path = os.path.join(DOWNLOAD_DIR, row[0])
+        if os.path.exists(file_path):
+            os.remove(file_path)
+
+    cursor.execute("DELETE FROM downloads WHERE id = ?", (file_id,))
+    conn.commit()
+    conn.close()
+    return {"status": "deleted"}
 
