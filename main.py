@@ -18,6 +18,7 @@ DOWNLOAD_DIR = os.path.join(os.getcwd(), "downloads")
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 DB_PATH = "vault.db"
+COOKIES_PATH = "cookies.txt"
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
@@ -38,7 +39,6 @@ def init_db():
 
 init_db()
 
-# WebSocket Manager for Real-Time Progress
 class ConnectionManager:
     def __init__(self):
         self.active_connections: list[WebSocket] = []
@@ -81,7 +81,6 @@ class DownloadRequest(BaseModel):
     quality: str = "best"
 
 def clean_ansi(text: str) -> str:
-    """Removes terminal color codes from yt-dlp strings"""
     return re.sub(r'\x1b\[[0-9;]*m', '', str(text)).strip() if text else ""
 
 def create_progress_hook():
@@ -141,10 +140,13 @@ async def download_video(req: DownloadRequest):
         'no_warnings': True,
         'extractor_args': {
             'twitter': {
-                'api': ['syndication']
+                'api': ['graphql', 'syndication', 'legacy']
             }
         }
     }
+
+    if os.path.exists(COOKIES_PATH):
+        ydl_opts['cookiefile'] = COOKIES_PATH
 
     if req.format_type == "mp3":
         ydl_opts.update({
@@ -185,7 +187,6 @@ async def download_video(req: DownloadRequest):
 
         return {"status": "success", "filename": filename, "title": title}
     except Exception as e:
-        # Cleans ANSI color tags from error messages
         clean_error = clean_ansi(str(e))
         raise HTTPException(status_code=500, detail=clean_error)
 
