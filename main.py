@@ -1,154 +1,194 @@
 import os
-import re
-import json
-import asyncio
-import sqlite3
 import shutil
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+import asyncio
+import json
+import requests
+import re
+import time
+import subprocess
+from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
 import yt_dlp
 
-app = FastAPI()
+app = FastAPI(title="VaultDL")
+
+DOWNLOADS_DIR = "downloads"
+os.makedirs(DOWNLOADS_DIR, exist_ok=True)
+os.makedirs("static", exist_ok=True)
+
+download_tasks = {}
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/media_files", StaticFiles(directory=DOWNLOADS_DIR), name="media_files")
 
-DOWNLOAD_DIR = os.path.join(os.getcwd(), "downloads")
-os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+@app.get("/sw.js")
+def get_service_worker():
+    sw_path = os.path.join("static", "sw.js")
+    if os.path.exists(sw_path):
+        return FileResponse(sw_path, media_type="application/javascript")
+    raise HTTPException(status_code=404, detail="Service worker not found")
 
-DB_PATH = "vault.db"
-COOKIES_PATH = "cookies.txt"
+@app.get("/favicon.ico")
+def get_favicon():
+    manifest_path = os.path.join("static", "manifest.json")
+    if os.path.exists(manifest_path):
+        return FileResponse(manifest_path)
+    raise HTTPException(status_code=404, detail="Favicon not found")
 
-def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS downloads (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT,
-            filename TEXT,
-            format_type TEXT,
-            quality TEXT,
-            downloaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            is_saved_to_phone INTEGER DEFAULT 0
-        )
-    """)
-    conn.commit()
-    conn.close()
-
-init_db()
-
-class ConnectionManager:
-    def __init__(self):
-        self.active_connections: list[WebSocket] = []
-
-    async def connect(self, websocket: WebSocket):
-        await websocket.accept()
-        self.active_connections.append(websocket)
-
-    def disconnect(self, websocket: WebSocket):
-        if websocket in self.active_connections:
-            self.active_connections.remove(websocket)
-
-    async def broadcast(self, message: str):
-        for connection in list(self.active_connections):
-            try:
-                await connection.send_text(message)
-            except Exception:
-                self.disconnect(connection)
-
-manager = ConnectionManager()
-main_loop = None
-
-@app.on_event("startup")
-async def startup_event():
-    global main_loop
-    main_loop = asyncio.get_running_loop()
-
-@app.websocket("/ws/progress")
-async def websocket_endpoint(websocket: WebSocket):
-    await manager.connect(websocket)
-    try:
-        while True:
-            await websocket.receive_text()
-    except WebSocketDisconnect:
-        manager.disconnect(websocket)
-
-class DownloadRequest(BaseModel):
-    url: str
-    format_type: str = "mp4"
-    quality: str = "best"
-
-def clean_ansi(text: str) -> str:
-    return re.sub(r'\x1b\[[0-9;]*m', '', str(text)).strip() if text else ""
-
-def create_progress_hook():
-    def hook(d):
-        if d['status'] == 'downloading':
-            total = d.get('total_bytes') or d.get('total_bytes_estimate') or 0
-            downloaded = d.get('downloaded_bytes', 0)
-            
-            percentage = round((downloaded / total) * 100, 1) if total > 0 else 0
-            speed = clean_ansi(d.get('_speed_str', '0 KB/s'))
-            eta = clean_ansi(d.get('_eta_str', '--'))
-
-            payload = {
-                "status": "downloading",
-                "percentage": percentage,
-                "speed": speed if speed else "Calculating...",
-                "eta": eta if eta else "--"
-            }
-
-            if main_loop and main_loop.is_running():
-                asyncio.run_coroutine_threadsafe(
-                    manager.broadcast(json.dumps(payload)),
-                    main_loop
-                )
-
-        elif d['status'] == 'finished':
-            payload = {"status": "processing", "percentage": 100, "speed": "Done", "eta": "0s"}
-            if main_loop and main_loop.is_running():
-                asyncio.run_coroutine_threadsafe(
-                    manager.broadcast(json.dumps(payload)),
-                    main_loop
-                )
-
-    return hook
+class RenameRequest(BaseModel):
+    old_filename: str
+    new_filename: str
 
 @app.get("/")
 def read_root():
-    return FileResponse("static/index.html")
+    index_path = os.path.join("static", "index.html")
+    if os.path.exists(index_path):
+        return FileResponse(index_path)
+    raise HTTPException(status_code=404, detail="Index file not found")
 
-@app.get("/manifest.json")
-def get_manifest():
-    return FileResponse("static/manifest.json", media_type="application/manifest+json")
+def progress_hook(d, task_id):
+    if d['status'] == 'downloading':
+        total = d.get('total_bytes') or d.get('total_bytes_estimate') or 1
+        downloaded = d.get('downloaded_bytes', 0)
+        pct = round((downloaded / total) * 100, 1)
+        eta = d.get('eta', 0)
 
-@app.get("/files/{filename}")
-def get_file(filename: str):
-    file_path = os.path.join(DOWNLOAD_DIR, filename)
-    if os.path.exists(file_path):
-        return FileResponse(file_path)
-    raise HTTPException(status_code=404, detail="File not found")
+        download_tasks[task_id] = {
+            "status": "downloading",
+            "percent": pct,
+            "downloaded_mb": round(downloaded / (1024 * 1024), 2),
+            "total_mb": round(total / (1024 * 1024), 2),
+            "eta_seconds": eta or 0
+        }
+    elif d['status'] == 'finished':
+        download_tasks[task_id] = {
+            "status": "finished",
+            "percent": 100,
+            "downloaded_mb": round(d.get('total_bytes', 0) / (1024 * 1024), 2),
+            "total_mb": round(d.get('total_bytes', 0) / (1024 * 1024), 2),
+            "eta_seconds": 0
+        }
 
-@app.post("/download")
-async def download_video(req: DownloadRequest):
+def resolve_hidden_media_stream(url: str):
+    """Scrapes raw web pages and hidden iframes for direct .m3u8 or .mp4 stream links."""
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Referer": url
+    }
+    try:
+        res = requests.get(url, headers=headers, timeout=10)
+        html = res.text
+        
+        # 1. Search directly for .m3u8 or .mp4 URLs embedded in JS or HTML
+        direct_streams = re.findall(r'https?://[^\s\'"<>]+?\.(?:m3u8|mp4)[^\s\'"<>]*', html)
+        if direct_streams:
+            return direct_streams[0]
+            
+        # 2. If not found, inspect all embedded iframe players on the page
+        iframes = re.findall(r'<iframe[^>]+src=["\']([^"\']+)["\']', html, re.IGNORECASE)
+        for iframe_url in iframes:
+            if iframe_url.startswith('//'):
+                iframe_url = 'https:' + iframe_url
+            if iframe_url.startswith('http'):
+                try:
+                    sub_res = requests.get(iframe_url, headers=headers, timeout=8)
+                    sub_streams = re.findall(r'https?://[^\s\'"<>]+?\.(?:m3u8|mp4)[^\s\'"<>]*', sub_res.text)
+                    if sub_streams:
+                        return sub_streams[0]
+                except Exception:
+                    continue
+    except Exception:
+        pass
+    return None
+
+def download_twitter_vx(url: str, task_id: str, format_type: str):
+    """Bypasses Twitter/X guest API restrictions via vxTwitter API."""
+    try:
+        download_tasks[task_id] = {"status": "downloading", "percent": 0, "eta_seconds": 0}
+        
+        api_url = re.sub(r'https?://(www\.)?(twitter\.com|x\.com)', 'https://api.vxtwitter.com', url)
+        api_url = api_url.split('?')[0]
+        
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
+        
+        response = requests.get(api_url, headers=headers, timeout=15)
+        if response.status_code != 200:
+            return False, f"API rejected the request (Code {response.status_code})"
+            
+        data = response.json()
+        media_urls = data.get("mediaURLs", [])
+        if not media_urls:
+            return False, "No playable media found in this tweet."
+            
+        video_url = media_urls[0]
+        author = data.get("user_screen_name", "twitter_user")
+        tweet_id = data.get("tweetID", task_id)
+        filename = f"{author}_{tweet_id}.mp4"
+        filepath = os.path.join(DOWNLOADS_DIR, filename)
+        
+        file_res = requests.get(video_url, stream=True, timeout=30)
+        total_size = int(file_res.headers.get('content-length', 0))
+        downloaded = 0
+        start_time = time.time()
+        
+        with open(filepath, "wb") as f:
+            for chunk in file_res.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    if total_size > 0:
+                        pct = (downloaded / total_size) * 100
+                        elapsed_time = time.time() - start_time
+                        speed = downloaded / elapsed_time if elapsed_time > 0 else 0
+                        remaining_bytes = total_size - downloaded
+                        eta = int(remaining_bytes / speed) if speed > 0 else 0
+                        
+                        download_tasks[task_id].update({
+                            "percent": round(pct, 1),
+                            "downloaded_mb": round(downloaded / (1024 * 1024), 2),
+                            "total_mb": round(total_size / (1024 * 1024), 2),
+                            "eta_seconds": eta
+                        })
+        
+        if format_type == 'mp3':
+            download_tasks[task_id] = {"status": "processing", "percent": 99, "eta_seconds": 0}
+            mp3_filepath = filepath.rsplit('.', 1)[0] + '.mp3'
+            subprocess.run([
+                "ffmpeg", "-y", "-i", filepath, 
+                "-q:a", "0", "-map", "a", mp3_filepath
+            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            os.remove(filepath)
+
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+def execute_download(target_url: str, format_type: str, quality: str, task_id: str):
+    download_tasks[task_id] = {"status": "starting", "percent": 0}
+
+    # Twitter/X override
+    if "twitter.com" in target_url.lower() or "x.com" in target_url.lower():
+        success, err = download_twitter_vx(target_url, task_id, format_type)
+        if success:
+            download_tasks[task_id] = {"status": "finished", "percent": 100, "eta_seconds": 0}
+        else:
+            download_tasks[task_id] = {"status": "error", "error": f"Failed: {err}"}
+        return
+
+    # Standard download options
     ydl_opts = {
-        'outtmpl': os.path.join(DOWNLOAD_DIR, '%(title)s.%(ext)s'),
-        'progress_hooks': [create_progress_hook()],
+        'outtmpl': os.path.join(DOWNLOADS_DIR, '%(title)s.%(ext)s'),
+        'progress_hooks': [lambda d: progress_hook(d, task_id)],
         'quiet': True,
         'no_warnings': True,
-        'extractor_args': {
-            'twitter': {
-                'api': ['graphql', 'syndication', 'legacy']
-            }
-        }
+        'restrictfilenames': True,
     }
 
-    if os.path.exists(COOKIES_PATH):
-        ydl_opts['cookiefile'] = COOKIES_PATH
-
-    if req.format_type == "mp3":
+    if format_type == 'mp3':
         ydl_opts.update({
             'format': 'bestaudio/best',
             'postprocessors': [{
@@ -158,89 +198,124 @@ async def download_video(req: DownloadRequest):
             }],
         })
     else:
-        if req.quality != "best":
-            ydl_opts['format'] = f"bestvideo[height<={req.quality}]+bestaudio/best[height<={req.quality}]/best"
+        if quality == '1080p':
+            ydl_opts['format'] = 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best'
+        elif quality == '720p':
+            ydl_opts['format'] = 'bestvideo[height<=720]+bestaudio/best[height<=720]/best'
         else:
-            ydl_opts['format'] = "best"
-
-    loop = asyncio.get_event_loop()
-    
-    def run_dl():
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(req.url, download=True)
-            filename = ydl.prepare_filename(info)
-            if req.format_type == "mp3":
-                filename = os.path.splitext(filename)[0] + ".mp3"
-            return os.path.basename(filename), info.get('title', 'Downloaded Media')
+            ydl_opts['format'] = 'best'
 
     try:
-        filename, title = await loop.run_in_executor(None, run_dl)
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([target_url])
+        download_tasks[task_id]['status'] = 'finished'
+    except Exception as initial_error:
+        # Auto-Resolver Step: If yt-dlp fails to recognize the webpage, attempt stream scraping
+        resolved_stream = resolve_hidden_media_stream(target_url)
+        if resolved_stream:
+            try:
+                # Add proper stream headers for resolved video links
+                ydl_opts['http_headers'] = {'Referer': target_url}
+                ydl_opts['outtmpl'] = os.path.join(DOWNLOADS_DIR, f'web_stream_{task_id[:8]}.%(ext)s')
+                
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    ydl.download([resolved_stream])
+                download_tasks[task_id]['status'] = 'finished'
+                return
+            except Exception as stream_error:
+                download_tasks[task_id] = {"status": "error", "error": f"Stream extracted but failed to download: {str(stream_error)}"}
+        else:
+            download_tasks[task_id] = {"status": "error", "error": f"Unsupported website and no video stream could be found automatically."}
 
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute(
-            "INSERT INTO downloads (title, filename, format_type, quality) VALUES (?, ?, ?, ?)",
-            (title, filename, req.format_type, req.quality)
-        )
-        conn.commit()
-        conn.close()
+@app.post("/download")
+async def start_download(
+    background_tasks: BackgroundTasks,
+    url: str = Query(...),
+    format_type: str = Query("mp4"),
+    quality: str = Query("best"),
+    task_id: str = Query(...)
+):
+    background_tasks.add_task(execute_download, url, format_type, quality, task_id)
+    return {"status": "started", "task_id": task_id}
 
-        return {"status": "success", "filename": filename, "title": title}
-    except Exception as e:
-        clean_error = clean_ansi(str(e))
-        raise HTTPException(status_code=500, detail=clean_error)
+@app.get("/download/progress/{task_id}")
+async def get_progress(task_id: str):
+    async def event_generator():
+        while True:
+            task = download_tasks.get(task_id, {"status": "initializing", "percent": 0})
+            yield f"data: {json.dumps(task)}\n\n"
+            if task.get("status") in ["finished", "error"]:
+                break
+            await asyncio.sleep(0.5)
 
-@app.get("/history")
-def get_history():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM downloads ORDER BY id DESC")
-    rows = [dict(row) for row in cursor.fetchall()]
-    conn.close()
-    return rows
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
-@app.post("/save-to-phone/{file_id}")
-def save_to_phone(file_id: int):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT filename FROM downloads WHERE id = ?", (file_id,))
-    row = cursor.fetchone()
+@app.get("/downloads/list")
+def list_downloads():
+    files = []
+    if os.path.exists(DOWNLOADS_DIR):
+        for f in os.listdir(DOWNLOADS_DIR):
+            file_path = os.path.join(DOWNLOADS_DIR, f)
+            if os.path.isfile(file_path):
+                stat = os.stat(file_path)
+                ext = f.split('.')[-1].upper() if '.' in f else 'FILE'
+                files.append({
+                    "name": f,
+                    "path": f"/media_files/{f}",
+                    "size_mb": round(stat.st_size / (1024 * 1024), 2),
+                    "size_bytes": stat.st_size,
+                    "timestamp": stat.st_mtime,
+                    "ext": ext
+                })
+    return files
 
-    if not row:
-        conn.close()
-        raise HTTPException(status_code=404, detail="Item not found")
+@app.delete("/downloads/delete")
+def delete_single_file(filename: str = Query(...)):
+    safe_filename = os.path.basename(filename)
+    file_path = os.path.join(DOWNLOADS_DIR, safe_filename)
+    if os.path.exists(file_path) and os.path.isfile(file_path):
+        os.remove(file_path)
+        return {"status": "success"}
+    raise HTTPException(status_code=404, detail="File not found")
 
-    filename = row[0]
-    src_path = os.path.join(DOWNLOAD_DIR, filename)
-    dest_dir = "/sdcard/Download"
-    dest_path = os.path.join(dest_dir, filename)
+@app.post("/downloads/rename")
+def rename_file(req: RenameRequest):
+    safe_old = os.path.basename(req.old_filename)
+    safe_new = os.path.basename(req.new_filename)
+    old_path = os.path.join(DOWNLOADS_DIR, safe_old)
+    new_path = os.path.join(DOWNLOADS_DIR, safe_new)
 
-    if not os.path.exists(src_path):
-        conn.close()
-        raise HTTPException(status_code=404, detail="File deleted from server")
+    if not os.path.exists(old_path):
+        raise HTTPException(status_code=404, detail="File not found")
+    if os.path.exists(new_path):
+        raise HTTPException(status_code=400, detail="A file with that name already exists")
 
-    shutil.copy(src_path, dest_path)
-    cursor.execute("UPDATE downloads SET is_saved_to_phone = 1 WHERE id = ?", (file_id,))
-    conn.commit()
-    conn.close()
+    os.rename(old_path, new_path)
+    return {"status": "success"}
 
-    return {"status": "success", "path": dest_path}
+@app.delete("/downloads/clear")
+def clear_downloads():
+    if os.path.exists(DOWNLOADS_DIR):
+        for f in os.listdir(DOWNLOADS_DIR):
+            fp = os.path.join(DOWNLOADS_DIR, f)
+            if os.path.isfile(fp):
+                os.remove(fp)
+    return {"status": "success"}
 
-@app.delete("/history/{file_id}")
-def delete_history(file_id: int):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT filename FROM downloads WHERE id = ?", (file_id,))
-    row = cursor.fetchone()
-
-    if row:
-        file_path = os.path.join(DOWNLOAD_DIR, row[0])
-        if os.path.exists(file_path):
-            os.remove(file_path)
-
-    cursor.execute("DELETE FROM downloads WHERE id = ?", (file_id,))
-    conn.commit()
-    conn.close()
-    return {"status": "deleted"}
+@app.get("/system/storage")
+def storage_info():
+    total_size = 0
+    count = 0
+    if os.path.exists(DOWNLOADS_DIR):
+        for f in os.listdir(DOWNLOADS_DIR):
+            fp = os.path.join(DOWNLOADS_DIR, f)
+            if os.path.isfile(fp):
+                total_size += os.path.getsize(fp)
+                count += 1
+    total, used, free = shutil.disk_usage("/")
+    return {
+        "vault_size_mb": round(total_size / (1024 * 1024), 2),
+        "file_count": count,
+        "disk_free_gb": round(free / (1024 * 1024 * 1024), 2)
+    }
 
