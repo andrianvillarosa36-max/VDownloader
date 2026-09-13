@@ -64,7 +64,7 @@
     .reel-video {
       width: 100%;
       height: 100%;
-      object-fit: contain;
+      object-fit: cover;
       background: #000;
     }
 
@@ -93,10 +93,15 @@
 
     .reel-play-icon {
       position: absolute;
-      font-size: 3rem;
-      color: rgba(255, 255, 255, 0.7);
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 3.5rem;
+      color: rgba(255, 255, 255, 0.85);
       pointer-events: none;
+      z-index: 15;
       display: none;
+      filter: drop-shadow(0 2px 10px rgba(0, 0, 0, 0.6));
     }
 
     /* Right-Side Action Column */
@@ -115,23 +120,79 @@
       background: none;
       border: none;
       color: white;
-      font-size: 1.8rem;
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 6px;
+      gap: 5px;
       cursor: pointer;
-      filter: drop-shadow(0px 2px 6px rgba(0,0,0,0.8));
-      transition: transform 0.2s ease;
+      transition: transform 0.15s ease;
+      filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.7));
+    }
+
+    .reel-action-icon {
+      width: 30px;
+      height: 30px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .reel-action-btn.saved {
+      color: var(--accent);
     }
 
     .reel-action-btn:active {
-      transform: scale(0.9);
+      transform: scale(0.92);
     }
 
     .reel-action-label {
-      font-size: 0.75rem;
+      font-size: 0.72rem;
       font-weight: 600;
+      text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
+    }
+
+    .reel-seek {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      width: 100%;
+      height: 16px;
+      margin: 0;
+      -webkit-appearance: none;
+      appearance: none;
+      background: transparent;
+      cursor: pointer;
+      z-index: 25;
+    }
+    .reel-seek::-webkit-slider-runnable-track {
+      height: 3px;
+      background: linear-gradient(to right, #fff var(--seek-pct, 0%), rgba(255, 255, 255, 0.3) var(--seek-pct, 0%));
+    }
+    .reel-seek::-moz-range-track {
+      height: 3px;
+      background: rgba(255, 255, 255, 0.3);
+    }
+    .reel-seek::-moz-range-progress {
+      height: 3px;
+      background: #fff;
+    }
+    .reel-seek::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 12px;
+      height: 12px;
+      margin-top: -4.5px;
+      border-radius: 50%;
+      background: #fff;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+    }
+    .reel-seek::-moz-range-thumb {
+      width: 12px;
+      height: 12px;
+      border: none;
+      border-radius: 50%;
+      background: #fff;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
     }
 
     .header-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 8px; flex-wrap: wrap; }
@@ -491,15 +552,56 @@
         icon.style.display = 'block';
       }
     }
-    
-    function saveToDevice(filePath, fileName) {
-      const a = document.createElement('a');
-      a.href = filePath;
-      a.download = fileName;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      alert(`Saving ${fileName} to your device...`);
+
+    function updateReelSeek(videoEl) {
+      if (!videoEl.duration || isNaN(videoEl.duration)) return;
+      const card = videoEl.closest('.reel-card');
+      const seek = card ? card.querySelector('.reel-seek') : null;
+      if (!seek || seek.matches(':active')) return; // don't fight the user's drag
+      const pct = (videoEl.currentTime / videoEl.duration) * 100;
+      seek.value = pct;
+      seek.style.setProperty('--seek-pct', pct + '%');
+    }
+
+    function seekReel(rangeEl) {
+      const card = rangeEl.closest('.reel-card');
+      const video = card ? card.querySelector('video') : null;
+      if (!video || !video.duration || isNaN(video.duration)) return;
+      video.currentTime = (rangeEl.value / 100) * video.duration;
+      rangeEl.style.setProperty('--seek-pct', rangeEl.value + '%');
+    }
+
+    async function saveToDevice(filePath, fileName, btnEl) {
+      const label = btnEl ? btnEl.querySelector('.reel-action-label') : null;
+      const originalLabel = label ? label.textContent : null;
+
+      if (btnEl) btnEl.disabled = true;
+      if (label) label.textContent = 'Saving...';
+
+      try {
+        const res = await fetch(filePath);
+        if (!res.ok) throw new Error('Fetch failed');
+        const blob = await res.blob();
+        const blobUrl = URL.createObjectURL(blob);
+
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(blobUrl);
+
+        if (label) label.textContent = 'Saved';
+        if (btnEl) btnEl.classList.add('saved');
+      } catch (e) {
+        if (label) label.textContent = 'Failed';
+      } finally {
+        setTimeout(() => {
+          if (label && originalLabel) label.textContent = originalLabel;
+          if (btnEl) { btnEl.classList.remove('saved'); btnEl.disabled = false; }
+        }, 1800);
+      }
     }
 
     function openVideoPlayer(filePath, title) {
@@ -754,13 +856,27 @@
           const escapedTitle = file.name.replace(/'/g, "\\'");
           return `
             <div class="reel-card" onclick="toggleReelPlay(this)">
-              <video class="reel-video" src="${file.path}" loop playsinline></video>
+              <video class="reel-video" src="${file.path}" loop playsinline ontimeupdate="updateReelSeek(this)"></video>
               <div class="reel-play-icon">▶</div>
-              
+
               <div class="reel-actions" onclick="event.stopPropagation()">
-                <button class="reel-action-btn" onclick="saveToDevice('${file.path}', '${escapedTitle}')">
-                  <span>📥</span>
+                <button class="reel-action-btn" onclick="saveToDevice('${file.path}', '${escapedTitle}', this)">
+                  <span class="reel-action-icon">
+                    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                  </span>
                   <span class="reel-action-label">Save</span>
+                </button>
+                <button class="reel-action-btn" onclick="renameSingleFile('${escapedTitle}')">
+                  <span class="reel-action-icon">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                  </span>
+                  <span class="reel-action-label">Edit</span>
+                </button>
+                <button class="reel-action-btn" onclick="deleteSingleFile('${escapedTitle}')">
+                  <span class="reel-action-icon">
+                    <svg width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
+                  </span>
+                  <span class="reel-action-label">Delete</span>
                 </button>
               </div>
 
@@ -768,6 +884,10 @@
                 <div class="reel-title">${file.name}</div>
                 <div class="reel-meta">${file.size_mb} MB • ${file.ext}</div>
               </div>
+
+              <input type="range" class="reel-seek" min="0" max="100" value="0" step="0.1"
+                     onclick="event.stopPropagation()"
+                     oninput="seekReel(this)">
             </div>
           `;
         }).join('');
