@@ -6,7 +6,6 @@
   <title>VaultDL</title>
   <link rel="manifest" href="/static/manifest.json" />
   <style>
-    /* VARIABLES & THEMES */
     :root {
       --bg-color: #0f0f12;
       --card-bg: #1a1a24;
@@ -29,483 +28,88 @@
       --border-color: #e2e8f0;
     }
 
-    /* GLOBAL STYLES */
-    * { 
-      box-sizing: border-box; 
-      margin: 0; 
-      padding: 0; 
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
-    }
-    
-    body { 
-      background-color: var(--bg-color); 
-      color: var(--text-main); 
-      padding-bottom: calc(var(--nav-height) + 20px); 
-      min-height: 100vh; 
-      transition: background 0.3s, color 0.3s; 
-    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background-color: var(--bg-color); color: var(--text-main); padding-bottom: calc(var(--nav-height) + 20px); min-height: 100vh; transition: background 0.3s, color 0.3s; }
 
-    /* HEADER */
-    header { 
-      position: sticky; 
-      top: 0; 
-      background: rgba(15, 15, 18, 0.95); 
-      backdrop-filter: blur(10px); 
-      padding: 16px; 
-      z-index: 100; 
-      border-bottom: 1px solid var(--border-color); 
-      display: flex; 
-      justify-content: space-between; 
-      align-items: center; 
-    }
-    
-    [data-theme="light"] header { 
-      background: rgba(244, 245, 248, 0.95); 
-    }
-    
-    .brand { 
-      font-size: 1.3rem; 
-      font-weight: bold; 
-      color: var(--accent); 
-    }
+    header { position: sticky; top: 0; background: rgba(15, 15, 18, 0.95); backdrop-filter: blur(10px); padding: 16px; z-index: 100; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; }
+    [data-theme="light"] header { background: rgba(244, 245, 248, 0.95); }
+    .brand { font-size: 1.3rem; font-weight: bold; color: var(--accent); }
 
-    /* LAYOUT & TABS */
-    .tab-content { 
-      display: none; 
-      padding: 16px; 
-    }
-    
-    .tab-content.active { 
-      display: block; 
-    }
+    .tab-content { display: none; padding: 16px; }
+    .tab-content.active { display: block; }
 
-    .header-row { 
-      display: flex; 
-      justify-content: space-between; 
-      align-items: center; 
-      margin-bottom: 12px; 
-      gap: 8px; 
-      flex-wrap: wrap; 
-    }
-    
-    .section-title { 
-      font-size: 1.1rem; 
-    }
+    .header-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 8px; flex-wrap: wrap; }
+    .section-title { font-size: 1.1rem; }
 
-    /* FORMS & INPUTS */
-    .search-bar { 
-      width: 100%; 
-      background: var(--card-bg); 
-      border: 1px solid var(--border-color); 
-      color: var(--text-main); 
-      padding: 10px 14px; 
-      border-radius: 8px; 
-      font-size: 0.9rem; 
-      outline: none; 
-      margin-bottom: 14px; 
-    }
-    
-    .sort-container { 
-      display: flex; 
-      align-items: center; 
-      gap: 8px; 
-    }
-    
-    .sort-select { 
-      background: var(--card-bg); 
-      color: var(--text-main); 
-      border: 1px solid var(--border-color); 
-      padding: 6px 12px; 
-      border-radius: 6px; 
-      font-size: 0.85rem; 
-      outline: none; 
-    }
+    .search-bar { width: 100%; background: var(--card-bg); border: 1px solid var(--border-color); color: var(--text-main); padding: 10px 14px; border-radius: 8px; font-size: 0.9rem; outline: none; margin-bottom: 14px; }
+    .sort-container { display: flex; align-items: center; gap: 8px; }
+    .sort-select { background: var(--card-bg); color: var(--text-main); border: 1px solid var(--border-color); padding: 6px 12px; border-radius: 6px; font-size: 0.85rem; outline: none; }
 
-    .settings-card, .downloader-card { 
-      background: var(--card-bg); 
-      border: 1px solid var(--border-color); 
-      padding: 16px; 
-      border-radius: 12px; 
-      margin-bottom: 16px; 
-    }
-    
-    .form-group { 
-      margin-bottom: 14px; 
-    }
-    
-    label { 
-      display: block; 
-      font-size: 0.85rem; 
-      color: var(--text-muted); 
-      margin-bottom: 6px; 
-    }
+    .settings-card, .downloader-card { background: var(--card-bg); border: 1px solid var(--border-color); padding: 16px; border-radius: 12px; margin-bottom: 16px; }
+    .form-group { margin-bottom: 14px; }
+    label { display: block; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 6px; }
     
     input[type="text"], select {
-      width: 100%; 
-      background: var(--bg-color); 
-      border: 1px solid var(--border-color); 
-      color: var(--text-main); 
-      padding: 12px; 
-      border-radius: 8px; 
-      outline: none; 
-      font-size: 0.95rem;
+      width: 100%; background: var(--bg-color); border: 1px solid var(--border-color); color: var(--text-main); padding: 12px; border-radius: 8px; outline: none; font-size: 0.95rem;
     }
 
-    .options-row { 
-      display: flex; 
-      gap: 12px; 
-    }
-    
-    .options-row .form-group { 
-      flex: 1; 
-    }
+    .options-row { display: flex; gap: 12px; }
+    .options-row .form-group { flex: 1; }
 
-    /* BUTTONS */
-    button.btn-primary { 
-      width: 100%; 
-      background: var(--accent); 
-      color: #fff; 
-      border: none; 
-      padding: 10px; 
-      border-radius: 8px; 
-      font-weight: 600; 
-      cursor: pointer; 
-      font-size: 0.9rem; 
-    }
-    
-    button.btn-danger { 
-      width: 100%; 
-      background: var(--danger); 
-      color: #fff; 
-      border: none; 
-      padding: 10px; 
-      border-radius: 8px; 
-      font-weight: 600; 
-      cursor: pointer; 
-      font-size: 0.85rem; 
-    }
-    
-    button.btn-secondary { 
-      background: var(--card-bg); 
-      color: var(--text-main); 
-      border: 1px solid var(--border-color); 
-      padding: 8px; 
-      border-radius: 8px; 
-      font-size: 0.85rem; 
-      cursor: pointer; 
-    }
+    button.btn-primary { width: 100%; background: var(--accent); color: #fff; border: none; padding: 10px; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 0.9rem; }
+    button.btn-danger { width: 100%; background: var(--danger); color: #fff; border: none; padding: 10px; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 0.85rem; }
+    button.btn-secondary { background: var(--card-bg); color: var(--text-main); border: 1px solid var(--border-color); padding: 8px; border-radius: 8px; font-size: 0.85rem; cursor: pointer; }
 
-    /* SETTINGS UI */
-    .setting-item { 
-      display: flex; 
-      justify-content: space-between; 
-      align-items: center; 
-      padding: 10px 0; 
-      border-bottom: 1px solid var(--border-color); 
-    }
-    
-    .setting-item:last-child { 
-      border-bottom: none; 
-    }
-    
-    .setting-label { 
-      font-size: 0.9rem; 
-      font-weight: 500; 
-    }
-    
-    .setting-desc { 
-      font-size: 0.75rem; 
-      color: var(--text-muted); 
-    }
+    .setting-item { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--border-color); }
+    .setting-item:last-child { border-bottom: none; }
+    .setting-label { font-size: 0.9rem; font-weight: 500; }
+    .setting-desc { font-size: 0.75rem; color: var(--text-muted); }
 
-    /* TOGGLE SWITCH */
-    .switch { 
-      position: relative; 
-      display: inline-block; 
-      width: 44px; 
-      height: 24px; 
-    }
-    
-    .switch input { 
-      opacity: 0; 
-      width: 0; 
-      height: 0; 
-    }
-    
-    .slider { 
-      position: absolute; 
-      cursor: pointer; 
-      top: 0; left: 0; right: 0; bottom: 0; 
-      background-color: var(--border-color); 
-      transition: .3s; 
-      border-radius: 24px; 
-    }
-    
-    .slider:before { 
-      position: absolute; 
-      content: ""; 
-      height: 18px; 
-      width: 18px; 
-      left: 3px; 
-      bottom: 3px; 
-      background-color: white; 
-      transition: .3s; 
-      border-radius: 50%; 
-    }
-    
-    input:checked + .slider { 
-      background-color: var(--accent); 
-    }
-    
-    input:checked + .slider:before { 
-      transform: translateX(20px); 
-    }
+    .switch { position: relative; display: inline-block; width: 44px; height: 24px; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: var(--border-color); transition: .3s; border-radius: 24px; }
+    .slider:before { position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 3px; background-color: white; transition: .3s; border-radius: 50%; }
+    input:checked + .slider { background-color: var(--accent); }
+    input:checked + .slider:before { transform: translateX(20px); }
 
-    /* PROGRESS BAR */
-    .progress-container { 
-      display: none; 
-      margin-top: 16px; 
-      background: var(--bg-color); 
-      padding: 12px; 
-      border-radius: 8px; 
-      border: 1px solid var(--border-color); 
-    }
-    
-    .progress-bar-bg { 
-      width: 100%; 
-      background: var(--border-color); 
-      height: 10px; 
-      border-radius: 5px; 
-      overflow: hidden; 
-      margin: 8px 0; 
-    }
-    
-    .progress-bar-fill { 
-      width: 0%; 
-      height: 100%; 
-      background: var(--accent); 
-      transition: width 0.3s ease; 
-    }
-    
-    .progress-stats { 
-      display: flex; 
-      justify-content: space-between; 
-      font-size: 0.8rem; 
-      color: var(--text-muted); 
-    }
+    .progress-container { display: none; margin-top: 16px; background: var(--bg-color); padding: 12px; border-radius: 8px; border: 1px solid var(--border-color); }
+    .progress-bar-bg { width: 100%; background: var(--border-color); height: 10px; border-radius: 5px; overflow: hidden; margin: 8px 0; }
+    .progress-bar-fill { width: 0%; height: 100%; background: var(--accent); transition: width 0.3s ease; }
+    .progress-stats { display: flex; justify-content: space-between; font-size: 0.8rem; color: var(--text-muted); }
 
-    /* MEDIA GRID */
-    .video-grid { 
-      display: grid; 
-      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); 
-      gap: 16px; 
-    }
-    
-    .video-card { 
-      background: var(--card-bg); 
-      border: 1px solid var(--border-color); 
-      border-radius: 12px; 
-      overflow: hidden; 
-      display: flex; 
-      flex-direction: column; 
-    }
-    
-    .media-thumbnail-wrapper { 
-      position: relative; 
-      width: 100%; 
-      aspect-ratio: 16/9; 
-      background: #000; 
-      display: flex; 
-      align-items: center; 
-      justify-content: center; 
-      cursor: pointer; 
-    }
-    
-    .play-badge { 
-      position: absolute; 
-      font-size: 2rem; 
-      color: #fff; 
-      background: rgba(0,0,0,0.5); 
-      padding: 8px 16px; 
-      border-radius: 50%; 
-      backdrop-filter: blur(4px); 
-    }
-    
-    .video-info { 
-      padding: 12px; 
-      flex: 1; 
-      display: flex; 
-      flex-direction: column; 
-      justify-content: space-between; 
-      gap: 8px; 
-    }
-    
-    .video-title { 
-      font-size: 0.9rem; 
-      font-weight: 600; 
-      word-break: break-word; 
-      line-height: 1.3; 
-    }
-    
-    .video-meta { 
-      display: flex; 
-      justify-content: space-between; 
-      font-size: 0.75rem; 
-      color: var(--text-muted); 
-    }
+    .video-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+    .video-card { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
+    .media-thumbnail-wrapper { position: relative; width: 100%; aspect-ratio: 16/9; background: #000; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+    .play-badge { position: absolute; font-size: 2rem; color: #fff; background: rgba(0,0,0,0.5); padding: 8px 16px; border-radius: 50%; backdrop-filter: blur(4px); }
+    .video-info { padding: 12px; flex: 1; display: flex; flex-direction: column; justify-content: space-between; gap: 8px; }
+    .video-title { font-size: 0.9rem; font-weight: 600; word-break: break-word; line-height: 1.3; }
+    .video-meta { display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--text-muted); }
 
-    /* BOTTOM NAVIGATION */
-    .bottom-nav { 
-      position: fixed; 
-      bottom: 0; left: 0; right: 0; 
-      height: var(--nav-height); 
-      background: var(--card-bg); 
-      border-top: 1px solid var(--border-color); 
-      display: flex; 
-      justify-content: space-around; 
-      align-items: center; 
-      z-index: 200; 
-    }
-    
-    .nav-item { 
-      display: flex; 
-      flex-direction: column; 
-      align-items: center; 
-      color: var(--text-muted); 
-      background: none; 
-      border: none; 
-      font-size: 0.75rem; 
-      gap: 4px; 
-      cursor: pointer; 
-    }
-    
-    .nav-item.active { 
-      color: var(--accent); 
-    }
+    .bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; height: var(--nav-height); background: var(--card-bg); border-top: 1px solid var(--border-color); display: flex; justify-content: space-around; align-items: center; z-index: 200; }
+    .nav-item { display: flex; flex-direction: column; align-items: center; color: var(--text-muted); background: none; border: none; font-size: 0.75rem; gap: 4px; cursor: pointer; }
+    .nav-item.active { color: var(--accent); }
 
-    /* PLAYER OVERLAY */
-    .player-overlay { 
-      display: none; 
-      position: fixed; 
-      top: 0; left: 0; right: 0; bottom: 0; 
-      background: rgba(0,0,0,0.95); 
-      z-index: 1000; 
-      flex-direction: column; 
-      justify-content: space-between; 
-      padding: 16px; 
-    }
+    .player-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.95); z-index: 1000; flex-direction: column; justify-content: space-between; padding: 16px; }
+    .player-overlay.active { display: flex; }
+    .player-header { display: flex; justify-content: space-between; align-items: center; color: #fff; }
+    .player-title { font-size: 0.95rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 80%; }
+    .close-player-btn { background: none; border: none; color: #fff; font-size: 1.5rem; cursor: pointer; }
+    .video-container { position: relative; width: 100%; max-width: 900px; margin: auto; }
+    video.dedicated-video { width: 100%; border-radius: 8px; max-height: 65vh; background: #000; }
     
-    .player-overlay.active { 
-      display: flex; 
-    }
-    
-    .player-header { 
-      display: flex; 
-      justify-content: space-between; 
-      align-items: center; 
-      color: #fff; 
-    }
-    
-    .player-title { 
-      font-size: 0.95rem; 
-      font-weight: 600; 
-      overflow: hidden; 
-      text-overflow: ellipsis; 
-      white-space: nowrap; 
-      max-width: 80%; 
-    }
-    
-    .close-player-btn { 
-      background: none; 
-      border: none; 
-      color: #fff; 
-      font-size: 1.5rem; 
-      cursor: pointer; 
-    }
-    
-    .video-container { 
-      position: relative; 
-      width: 100%; 
-      max-width: 900px; 
-      margin: auto; 
-    }
-    
-    video.dedicated-video { 
-      width: 100%; 
-      border-radius: 8px; 
-      max-height: 65vh; 
-      background: #000; 
-    }
-    
-    .player-controls { 
-      width: 100%; 
-      max-width: 900px; 
-      margin: 0 auto; 
-      display: flex; 
-      flex-direction: column; 
-      gap: 10px; 
-    }
-    
-    .timeline-slider { 
-      width: 100%; 
-      accent-color: var(--accent); 
-      cursor: pointer; 
-    }
-    
-    .controls-row { 
-      display: flex; 
-      justify-content: space-between; 
-      align-items: center; 
-      color: #fff; 
-      flex-wrap: wrap; 
-      gap: 8px; 
-    }
-    
-    .controls-group { 
-      display: flex; 
-      align-items: center; 
-      gap: 8px; 
-    }
-    
-    .player-btn { 
-      background: none; 
-      border: none; 
-      color: #fff; 
-      font-size: 1.1rem; 
-      cursor: pointer; 
-      padding: 6px 10px; 
-      border-radius: 4px; 
-    }
-    
-    .player-btn:hover { 
-      background: rgba(255, 255, 255, 0.1); 
-    }
-    
-    .volume-slider { 
-      width: 70px; 
-      accent-color: var(--accent); 
-      cursor: pointer; 
-    }
-    
-    .speed-select { 
-      background: rgba(255,255,255,0.1); 
-      color: #fff; 
-      border: 1px solid rgba(255,255,255,0.2); 
-      border-radius: 4px; 
-      padding: 4px; 
-      font-size: 0.8rem; 
-      outline: none; 
-    }
-    
-    .speed-select option { 
-      background: var(--card-bg); 
-      color: var(--text-main); 
-    }
+    .player-controls { width: 100%; max-width: 900px; margin: 0 auto; display: flex; flex-direction: column; gap: 10px; }
+    .timeline-slider { width: 100%; accent-color: var(--accent); cursor: pointer; }
+    .controls-row { display: flex; justify-content: space-between; align-items: center; color: #fff; flex-wrap: wrap; gap: 8px; }
+    .controls-group { display: flex; align-items: center; gap: 8px; }
+    .player-btn { background: none; border: none; color: #fff; font-size: 1.1rem; cursor: pointer; padding: 6px 10px; border-radius: 4px; }
+    .player-btn:hover { background: rgba(255, 255, 255, 0.1); }
+    .volume-slider { width: 70px; accent-color: var(--accent); cursor: pointer; }
+    .speed-select { background: rgba(255,255,255,0.1); color: #fff; border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; padding: 4px; font-size: 0.8rem; outline: none; }
+    .speed-select option { background: var(--card-bg); color: var(--text-main); }
   </style>
 </head>
 <body>
 
-  <!-- HEADER -->
   <header>
     <div class="brand">VaultDL</div>
   </header>
@@ -569,6 +173,7 @@
           <span id="downloadStatus">Connecting...</span>
           <span id="progressEta">ETA: --s</span>
         </div>
+        <button id="cancelDownloadBtn" class="btn-danger" style="margin-top: 10px;" onclick="cancelDownload()">Cancel Download</button>
       </div>
     </div>
   </section>
@@ -688,7 +293,6 @@
     </div>
   </div>
 
-  <!-- BOTTOM NAVIGATION -->
   <nav class="bottom-nav">
     <button class="nav-item active" onclick="switchTab('home', this)">
       <span style="font-size: 1.2rem;">🏠</span>
@@ -709,8 +313,8 @@
   </nav>
 
   <script>
-    // --- STATE & DOM ELEMENTS ---
     let cachedFiles = [];
+    let currentTaskId = null;
     const playerOverlay = document.getElementById('playerOverlay');
     const videoEl = document.getElementById('vaultVideoElement');
     const playPauseBtn = document.getElementById('playPauseBtn');
@@ -720,7 +324,7 @@
     const currentTimeDisplay = document.getElementById('currentTimeDisplay');
     const totalDurationDisplay = document.getElementById('totalDurationDisplay');
 
-    // --- INITIALIZATION ---
+    // Register Service Worker & Handle Shared URLs
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('/static/sw.js').catch(err => console.log('SW Error:', err));
@@ -732,7 +336,7 @@
       loadDownloadedMedia();
       loadStorageStats();
 
-          // Check Web Share Target query params
+      // Check Web Share Target query params
       const urlParams = new URLSearchParams(window.location.search);
       const sharedUrl = urlParams.get('url') || urlParams.get('text');
       if (sharedUrl) {
@@ -741,18 +345,14 @@
         document.getElementById('mediaUrl').value = sharedUrl;
       }
 
-      // Video event listeners
       videoEl.addEventListener('timeupdate', updateVideoProgress);
       videoEl.addEventListener('loadedmetadata', () => {
         totalDurationDisplay.textContent = formatDuration(videoEl.duration);
         updateMediaSessionPosition();
       });
-      videoEl.addEventListener('ended', () => { 
-        playPauseBtn.textContent = '▶'; 
-      });
+      videoEl.addEventListener('ended', () => { playPauseBtn.textContent = '▶'; });
     });
 
-    // --- NAVIGATION ---
     function switchTab(tabId, el) {
       document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
       document.querySelectorAll('.nav-item').forEach(nav => nav.classList.remove('active'));
@@ -767,7 +367,6 @@
       }
     }
 
-    // --- UTILITIES ---
     function formatDuration(seconds) {
       if (!seconds || isNaN(seconds)) return "00:00";
       const mins = Math.floor(seconds / 60);
@@ -775,7 +374,7 @@
       return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
     }
 
-    // --- PLAYER FUNCTIONS & MEDIA SESSION ---
+    /* PLAYER FUNCTIONS & MEDIA SESSION */
     function openVideoPlayer(filePath, title) {
       document.getElementById('playerMediaTitle').textContent = title;
       videoEl.src = filePath;
@@ -793,13 +392,8 @@
     }
 
     function togglePlayPause() {
-      if (videoEl.paused) { 
-        videoEl.play(); 
-        playPauseBtn.textContent = '⏸'; 
-      } else { 
-        videoEl.pause(); 
-        playPauseBtn.textContent = '▶'; 
-      }
+      if (videoEl.paused) { videoEl.play(); playPauseBtn.textContent = '⏸'; }
+      else { videoEl.pause(); playPauseBtn.textContent = '▶'; }
     }
 
     function updateVideoProgress() {
@@ -810,49 +404,23 @@
       }
     }
 
-    function seekVideo(val) { 
-      if (videoEl.duration) videoEl.currentTime = (val / 100) * videoEl.duration; 
-    }
-    
-    function rewindVideo(secs) { 
-      videoEl.currentTime = Math.max(0, videoEl.currentTime - secs); 
-    }
-    
-    function forwardVideo(secs) { 
-      videoEl.currentTime = Math.min(videoEl.duration, videoEl.currentTime + secs); 
-    }
-    
-    function setVolume(val) { 
-      videoEl.volume = val; 
-      videoEl.muted = (val == 0); 
-      muteBtn.textContent = videoEl.muted ? '🔇' : '🔊'; 
-    }
-    
-    function toggleMute() { 
-      videoEl.muted = !videoEl.muted; 
-      muteBtn.textContent = videoEl.muted ? '🔇' : '🔊'; 
-      volumeBar.value = videoEl.muted ? 0 : videoEl.volume; 
-    }
-    
-    function changePlaybackSpeed(rate) { 
-      videoEl.playbackRate = parseFloat(rate); 
-    }
+    function seekVideo(val) { if (videoEl.duration) videoEl.currentTime = (val / 100) * videoEl.duration; }
+    function rewindVideo(secs) { videoEl.currentTime = Math.max(0, videoEl.currentTime - secs); }
+    function forwardVideo(secs) { videoEl.currentTime = Math.min(videoEl.duration, videoEl.currentTime + secs); }
+    function setVolume(val) { videoEl.volume = val; videoEl.muted = (val == 0); muteBtn.textContent = videoEl.muted ? '🔇' : '🔊'; }
+    function toggleMute() { videoEl.muted = !videoEl.muted; muteBtn.textContent = videoEl.muted ? '🔇' : '🔊'; volumeBar.value = videoEl.muted ? 0 : videoEl.volume; }
+    function changePlaybackSpeed(rate) { videoEl.playbackRate = parseFloat(rate); }
 
     async function togglePiP() {
       try {
         if (document.pictureInPictureElement) await document.exitPictureInPicture();
         else if (document.pictureInPictureEnabled) await videoEl.requestPictureInPicture();
-      } catch (err) { 
-        alert("PiP Error: " + err.message); 
-      }
+      } catch (err) { alert("PiP Error: " + err.message); }
     }
 
     function toggleFullscreen() {
-      if (!document.fullscreenElement) {
-        videoEl.requestFullscreen().catch(err => alert(err.message));
-      } else {
-        document.exitFullscreen();
-      }
+      if (!document.fullscreenElement) videoEl.requestFullscreen().catch(err => alert(err.message));
+      else document.exitFullscreen();
     }
 
     function setupMediaSession(title) {
@@ -877,18 +445,13 @@
       }
     }
 
-    // --- FILE MANAGEMENT ---
+    /* FILE MANAGEMENT */
     async function deleteSingleFile(filename) {
       if (!confirm(`Delete "${filename}"?`)) return;
       try {
         const res = await fetch(`/downloads/delete?filename=${encodeURIComponent(filename)}`, { method: 'DELETE' });
-        if (res.ok) { 
-          loadDownloadedMedia(); 
-          loadStorageStats(); 
-        }
-      } catch (e) { 
-        alert("Error deleting file."); 
-      }
+        if (res.ok) { loadDownloadedMedia(); loadStorageStats(); }
+      } catch (e) { alert("Error deleting file."); }
     }
 
     async function renameSingleFile(oldName) {
@@ -900,26 +463,15 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ old_filename: oldName, new_filename: newName })
         });
-        if (res.ok) {
-          loadDownloadedMedia();
-        } else { 
-          const err = await res.json(); 
-          alert(err.detail || "Rename failed."); 
-        }
-      } catch (e) { 
-        alert("Error renaming file."); 
-      }
+        if (res.ok) loadDownloadedMedia();
+        else { const err = await res.json(); alert(err.detail || "Rename failed."); }
+      } catch (e) { alert("Error renaming file."); }
     }
 
-    // --- PREFERENCES & STORAGE ---
+    /* PREFERENCES & STORAGE */
     function toggleTheme(isLight) {
-      if (isLight) { 
-        document.body.setAttribute('data-theme', 'light'); 
-        localStorage.setItem('theme', 'light'); 
-      } else { 
-        document.body.removeAttribute('data-theme'); 
-        localStorage.setItem('theme', 'dark'); 
-      }
+      if (isLight) { document.body.setAttribute('data-theme', 'light'); localStorage.setItem('theme', 'light'); }
+      else { document.body.removeAttribute('data-theme'); localStorage.setItem('theme', 'dark'); }
     }
 
     function saveDefaultSettings() {
@@ -950,48 +502,42 @@
         const data = await res.json();
         document.getElementById('vaultSizeText').textContent = `${data.vault_size_mb} MB (${data.file_count} files)`;
         document.getElementById('diskFreeText').textContent = `${data.disk_free_gb} GB free`;
-      } catch (e) { 
-        document.getElementById('vaultSizeText').textContent = "Unavailable"; 
-      }
+      } catch (e) { document.getElementById('vaultSizeText').textContent = "Unavailable"; }
     }
 
     async function clearAllDownloads() {
       if (confirm("Delete ALL files from VaultDL?")) {
         try {
           const res = await fetch('/downloads/clear', { method: 'DELETE' });
-          if (res.ok) { 
-            loadDownloadedMedia(); 
-            loadStorageStats(); 
-          }
-        } catch (e) { 
-          alert("Error clearing files."); 
-        }
+          if (res.ok) { loadDownloadedMedia(); loadStorageStats(); }
+        } catch (e) { alert("Error clearing files."); }
       }
     }
 
-    // --- DOWNLOADER ENGINE ---
+    /* DOWNLOADER ENGINE */
     async function startDownload() {
       const urlInput = document.getElementById('mediaUrl');
       const url = urlInput.value.trim();
       const formatType = document.getElementById('formatType').value;
       const quality = document.getElementById('quality').value;
-      
       const progressBox = document.getElementById('progressBox');
       const progressBarFill = document.getElementById('progressBarFill');
       const progressPercent = document.getElementById('progressPercent');
       const progressSize = document.getElementById('progressSize');
       const progressEta = document.getElementById('progressEta');
       const downloadStatus = document.getElementById('downloadStatus');
+      const cancelBtn = document.getElementById('cancelDownloadBtn');
 
-      if (!url) { 
-        alert("Paste a valid media URL."); 
-        return; 
-      }
+      if (!url) { alert("Paste a valid media URL."); return; }
 
       const taskId = "task_" + Date.now();
+      currentTaskId = taskId;
       progressBox.style.display = 'block';
       progressBarFill.style.width = '0%';
       downloadStatus.textContent = 'Initializing stream...';
+      cancelBtn.style.display = 'block';
+      cancelBtn.disabled = false;
+      cancelBtn.textContent = 'Cancel Download';
 
       const eventSource = new EventSource(`/download/progress/${taskId}`);
       eventSource.onmessage = (event) => {
@@ -1002,25 +548,56 @@
           progressSize.textContent = `${data.downloaded_mb || 0} MB / ${data.total_mb || 0} MB`;
           progressEta.textContent = `ETA: ${data.eta_seconds || 0}s`;
           downloadStatus.textContent = 'Downloading...';
+        } else if (data.status === 'cancelling') {
+          downloadStatus.textContent = 'Cancelling...';
+          cancelBtn.disabled = true;
+        } else if (data.status === 'cancelled') {
+          downloadStatus.textContent = 'Cancelled';
+          cancelBtn.style.display = 'none';
+          currentTaskId = null;
+          eventSource.close();
         } else if (data.status === 'finished') {
           progressBarFill.style.width = '100%';
           progressPercent.textContent = '100%';
           downloadStatus.textContent = 'Completed!';
+          cancelBtn.style.display = 'none';
+          currentTaskId = null;
           eventSource.close();
+          loadDownloadedMedia();
         } else if (data.status === 'error') {
-          downloadStatus.textContent = 'Download error';
+          downloadStatus.textContent = data.error || 'Download error';
+          cancelBtn.style.display = 'none';
+          currentTaskId = null;
           eventSource.close();
         }
       };
 
       try {
         const res = await fetch(`/download?url=${encodeURIComponent(url)}&format_type=${formatType}&quality=${quality}&task_id=${taskId}`, { method: 'POST' });
-        if (res.ok) { 
-          urlInput.value = ""; 
-          loadDownloadedMedia(); 
+        if (res.ok) {
+          urlInput.value = "";
+        } else {
+          downloadStatus.textContent = "Failed to start download server request";
+          cancelBtn.style.display = 'none';
+          eventSource.close();
         }
-      } catch (err) { 
-        downloadStatus.textContent = "Network Error"; 
+      } catch (err) {
+        downloadStatus.textContent = "Network Error";
+        cancelBtn.style.display = 'none';
+        eventSource.close();
+      }
+    }
+
+    async function cancelDownload() {
+      if (!currentTaskId) return;
+      const cancelBtn = document.getElementById('cancelDownloadBtn');
+      cancelBtn.disabled = true;
+      cancelBtn.textContent = 'Cancelling...';
+      try {
+        await fetch(`/download/cancel/${currentTaskId}`, { method: 'POST' });
+      } catch (err) {
+        // The progress stream will still reflect the real state once the
+        // server processes it — no need to surface a network hiccup here.
       }
     }
 
@@ -1042,8 +619,7 @@
 
       if (!cachedFiles || cachedFiles.length === 0) {
         const emptyHTML = '<p style="color: var(--text-muted);">No media saved yet.</p>';
-        hGrid.innerHTML = emptyHTML; 
-        dGrid.innerHTML = emptyHTML;
+        hGrid.innerHTML = emptyHTML; dGrid.innerHTML = emptyHTML;
         return;
       }
 
@@ -1057,8 +633,7 @@
 
       if (filteredFiles.length === 0) {
         const noMatch = '<p style="color: var(--text-muted);">No matching files found.</p>';
-        hGrid.innerHTML = noMatch; 
-        dGrid.innerHTML = noMatch;
+        hGrid.innerHTML = noMatch; dGrid.innerHTML = noMatch;
         return;
       }
 
