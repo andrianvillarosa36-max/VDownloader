@@ -49,44 +49,45 @@ def read_root():
     raise HTTPException(status_code=404, detail="Index file not found")
 
 def progress_hook(d, task_id):
+    # INJECT THIS: Abort yt-dlp if a cancellation was requested
+    if download_tasks.get(task_id, {}).get("cancel_requested"):
+        raise ValueError("DOWNLOAD_CANCELLED")
+
     if d['status'] == 'downloading':
         total = d.get('total_bytes') or d.get('total_bytes_estimate') or 1
         downloaded = d.get('downloaded_bytes', 0)
         pct = round((downloaded / total) * 100, 1)
         eta = d.get('eta', 0)
 
-        download_tasks[task_id] = {
+        download_tasks[task_id].update({
             "status": "downloading",
             "percent": pct,
             "downloaded_mb": round(downloaded / (1024 * 1024), 2),
             "total_mb": round(total / (1024 * 1024), 2),
-            "eta_seconds": eta or 0
-        }
+            "eta_seconds": int(eta) if eta else 0
+        })
     elif d['status'] == 'finished':
-        download_tasks[task_id] = {
+        download_tasks[task_id].update({
             "status": "finished",
             "percent": 100,
             "downloaded_mb": round(d.get('total_bytes', 0) / (1024 * 1024), 2),
             "total_mb": round(d.get('total_bytes', 0) / (1024 * 1024), 2),
             "eta_seconds": 0
-        }
+        })
 
 def resolve_hidden_media_stream(url: str):
-    """Scrapes raw web pages and hidden iframes for direct .m3u8 or .mp4 stream links."""
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Referer": url
     }
     try:
         res = requests.get(url, headers=headers, timeout=10)
         html = res.text
-        
-        # 1. Search directly for .m3u8 or .mp4 URLs embedded in JS or HTML
+
         direct_streams = re.findall(r'https?://[^\s\'"<>]+?\.(?:m3u8|mp4)[^\s\'"<>]*', html)
         if direct_streams:
             return direct_streams[0]
-            
-        # 2. If not found, inspect all embedded iframe players on the page
+
         iframes = re.findall(r'<iframe[^>]+src=["\']([^"\']+)["\']', html, re.IGNORECASE)
         for iframe_url in iframes:
             if iframe_url.startswith('//'):
@@ -104,39 +105,40 @@ def resolve_hidden_media_stream(url: str):
     return None
 
 def download_twitter_vx(url: str, task_id: str, format_type: str):
-    """Bypasses Twitter/X guest API restrictions via vxTwitter API."""
+    filepath = None
     try:
-        download_tasks[task_id] = {"status": "downloading", "percent": 0, "eta_seconds": 0}
-        
+        download_tasks[task_id].update({"status": "downloading", "percent": 0, "eta_seconds": 0})
+
         api_url = re.sub(r'https?://(www\.)?(twitter\.com|x\.com)', 'https://api.vxtwitter.com', url)
         api_url = api_url.split('?')[0]
-        
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        }
-        
+
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+
         response = requests.get(api_url, headers=headers, timeout=15)
         if response.status_code != 200:
             return False, f"API rejected the request (Code {response.status_code})"
-            
+
         data = response.json()
         media_urls = data.get("mediaURLs", [])
         if not media_urls:
             return False, "No playable media found in this tweet."
-            
+
         video_url = media_urls[0]
         author = data.get("user_screen_name", "twitter_user")
         tweet_id = data.get("tweetID", task_id)
         filename = f"{author}_{tweet_id}.mp4"
         filepath = os.path.join(DOWNLOADS_DIR, filename)
-        
+
         file_res = requests.get(video_url, stream=True, timeout=30)
         total_size = int(file_res.headers.get('content-length', 0))
         downloaded = 0
         start_time = time.time()
-        
+
         with open(filepath, "wb") as f:
             for chunk in file_res.iter_content(chunk_size=8192):
+                if download_tasks[task_id].get("cancel_requested"):
+                    raise ValueError("DOWNLOAD_CANCELLED")
+
                 if chunk:
                     f.write(chunk)
                     downloaded += len(chunk)
@@ -146,40 +148,41 @@ def download_twitter_vx(url: str, task_id: str, format_type: str):
                         speed = downloaded / elapsed_time if elapsed_time > 0 else 0
                         remaining_bytes = total_size - downloaded
                         eta = int(remaining_bytes / speed) if speed > 0 else 0
-                        
+
                         download_tasks[task_id].update({
                             "percent": round(pct, 1),
                             "downloaded_mb": round(downloaded / (1024 * 1024), 2),
                             "total_mb": round(total_size / (1024 * 1024), 2),
-                            "eta_seconds": eta
+                            "eta_seconds": int(eta)
                         })
-        
+
         if format_type == 'mp3':
-            download_tasks[task_id] = {"status": "processing", "percent": 99, "eta_seconds": 0}
+            download_tasks[task_id].update({"status": "processing", "percent": 99, "eta_seconds": 0})
             mp3_filepath = filepath.rsplit('.', 1)[0] + '.mp3'
             subprocess.run([
-                "ffmpeg", "-y", "-i", filepath, 
+                "ffmpeg", "-y", "-i", filepath,
                 "-q:a", "0", "-map", "a", mp3_filepath
             ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             os.remove(filepath)
 
         return True, None
     except Exception as e:
-        return False, str(e)
-
+        # INJECT THIS: Catch the intentional cancellation error
+        if "DOWNLOAD_CANCELLED" in str(e) or download_tasks.get(task_id, {}).get("cancel_requested"):
+            download_tasks[task_id]['status'] = 'cancelled'
+            return
 def execute_download(target_url: str, format_type: str, quality: str, task_id: str):
-    download_tasks[task_id] = {"status": "starting", "percent": 0}
+    download_tasks[task_id] = {"status": "starting", "percent": 0, "cancel_requested": False}
 
-    # Twitter/X override
     if "twitter.com" in target_url.lower() or "x.com" in target_url.lower():
         success, err = download_twitter_vx(target_url, task_id, format_type)
         if success:
-            download_tasks[task_id] = {"status": "finished", "percent": 100, "eta_seconds": 0}
+            download_tasks[task_id].update({"status": "finished", "percent": 100, "eta_seconds": 0})
         else:
-            download_tasks[task_id] = {"status": "error", "error": f"Failed: {err}"}
+            status_code = "cancelled" if err == "Cancelled by user" else "error"
+            download_tasks[task_id].update({"status": status_code, "error": err if status_code == "error" else None})
         return
 
-    # Standard download options
     ydl_opts = {
         'outtmpl': os.path.join(DOWNLOADS_DIR, '%(title)s.%(ext)s'),
         'progress_hooks': [lambda d: progress_hook(d, task_id)],
@@ -208,24 +211,47 @@ def execute_download(target_url: str, format_type: str, quality: str, task_id: s
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([target_url])
+            
+        # INJECT THIS: yt-dlp swallows hook exceptions, so check the flag again
+        if download_tasks.get(task_id, {}).get("cancel_requested"):
+            download_tasks[task_id]['status'] = 'cancelled'
+            return
+
         download_tasks[task_id]['status'] = 'finished'
     except Exception as initial_error:
-        # Auto-Resolver Step: If yt-dlp fails to recognize the webpage, attempt stream scraping
+        if "DOWNLOAD_CANCELLED" in str(initial_error) or download_tasks[task_id].get("cancel_requested"):
+            download_tasks[task_id]['status'] = 'cancelled'
+            return
+
         resolved_stream = resolve_hidden_media_stream(target_url)
         if resolved_stream:
             try:
-                # Add proper stream headers for resolved video links
+                if download_tasks[task_id].get("cancel_requested"):
+                    download_tasks[task_id]['status'] = 'cancelled'
+                    return
+
                 ydl_opts['http_headers'] = {'Referer': target_url}
                 ydl_opts['outtmpl'] = os.path.join(DOWNLOADS_DIR, f'web_stream_{task_id[:8]}.%(ext)s')
-                
+
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     ydl.download([resolved_stream])
+                
+                if download_tasks[task_id].get("cancel_requested"):
+                    download_tasks[task_id]['status'] = 'cancelled'
+                    return
+                    
                 download_tasks[task_id]['status'] = 'finished'
                 return
             except Exception as stream_error:
-                download_tasks[task_id] = {"status": "error", "error": f"Stream extracted but failed to download: {str(stream_error)}"}
+                if "DOWNLOAD_CANCELLED" in str(stream_error) or download_tasks[task_id].get("cancel_requested"):
+                    download_tasks[task_id]['status'] = 'cancelled'
+                else:
+                    download_tasks[task_id].update({"status": "error", "error": f"Failed: {str(stream_error)}"})
         else:
-            download_tasks[task_id] = {"status": "error", "error": f"Unsupported website and no video stream could be found automatically."}
+            if download_tasks[task_id].get("cancel_requested"):
+                download_tasks[task_id]['status'] = 'cancelled'
+            else:
+                download_tasks[task_id].update({"status": "error", "error": "Unsupported website."})
 
 @app.post("/download")
 async def start_download(
@@ -238,13 +264,20 @@ async def start_download(
     background_tasks.add_task(execute_download, url, format_type, quality, task_id)
     return {"status": "started", "task_id": task_id}
 
+@app.post("/download/cancel/{task_id}")
+async def cancel_download(task_id: str):
+    if task_id in download_tasks:
+        download_tasks[task_id]["cancel_requested"] = True
+        return {"status": "success", "message": "Cancellation requested"}
+    raise HTTPException(status_code=404, detail="Task not found")
+
 @app.get("/download/progress/{task_id}")
 async def get_progress(task_id: str):
     async def event_generator():
         while True:
             task = download_tasks.get(task_id, {"status": "initializing", "percent": 0})
             yield f"data: {json.dumps(task)}\n\n"
-            if task.get("status") in ["finished", "error"]:
+            if task.get("status") in ["finished", "error", "cancelled"]:
                 break
             await asyncio.sleep(0.5)
 
@@ -318,4 +351,11 @@ def storage_info():
         "file_count": count,
         "disk_free_gb": round(free / (1024 * 1024 * 1024), 2)
     }
+
+@app.post("/download/cancel/{task_id}")
+async def cancel_download(task_id: str):
+    if task_id in download_tasks:
+        download_tasks[task_id]["cancel_requested"] = True
+        return {"status": "success"}
+    return {"status": "not found"}
 
