@@ -38,6 +38,102 @@
     .tab-content { display: none; padding: 16px; }
     .tab-content.active { display: block; }
 
+    /* Reels / TikTok Style Feed for Home Tab */
+    #tab-home.active {
+      display: block;
+      padding: 0;
+      height: calc(100vh - var(--nav-height) - 58px);
+      overflow-y: scroll;
+      scroll-snap-type: y mandatory;
+      background: #000;
+    }
+
+    .reel-card {
+      width: 100%;
+      height: 100%;
+      scroll-snap-align: start;
+      scroll-snap-stop: always;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #000;
+      overflow: hidden;
+    }
+
+    .reel-video {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      background: #000;
+    }
+
+    .reel-overlay {
+      position: absolute;
+      bottom: 20px;
+      left: 16px;
+      right: 70px;
+      color: #fff;
+      text-shadow: 0 2px 8px rgba(0, 0, 0, 0.9);
+      pointer-events: none;
+      z-index: 10;
+    }
+
+    .reel-title {
+      font-size: 1rem;
+      font-weight: 600;
+      word-break: break-word;
+      margin-bottom: 6px;
+    }
+
+    .reel-meta {
+      font-size: 0.8rem;
+      opacity: 0.8;
+    }
+
+    .reel-play-icon {
+      position: absolute;
+      font-size: 3rem;
+      color: rgba(255, 255, 255, 0.7);
+      pointer-events: none;
+      display: none;
+    }
+
+    /* Right-Side Action Column */
+    .reel-actions {
+      position: absolute;
+      right: 12px;
+      bottom: 30px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      align-items: center;
+      z-index: 20;
+    }
+
+    .reel-action-btn {
+      background: none;
+      border: none;
+      color: white;
+      font-size: 1.8rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+      filter: drop-shadow(0px 2px 6px rgba(0,0,0,0.8));
+      transition: transform 0.2s ease;
+    }
+
+    .reel-action-btn:active {
+      transform: scale(0.9);
+    }
+
+    .reel-action-label {
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+
     .header-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 8px; flex-wrap: wrap; }
     .section-title { font-size: 1.1rem; }
 
@@ -114,21 +210,8 @@
     <div class="brand">VaultDL</div>
   </header>
 
-  <!-- HOME TAB -->
-  <section id="tab-home" class="tab-content active">
-    <div class="header-row">
-      <h3 class="section-title">Home Feed</h3>
-      <div class="sort-container">
-        <label for="homeSort" style="font-size: 0.8rem; margin:0;">Sort:</label>
-        <select id="homeSort" class="sort-select" onchange="sortAndRenderMedia()">
-          <option value="date">Date (Newest)</option>
-          <option value="size">File Size</option>
-        </select>
-      </div>
-    </div>
-    <input type="text" id="homeSearch" class="search-bar" placeholder="🔍 Search media in Vault..." oninput="sortAndRenderMedia()" />
-    <div class="video-grid" id="homeGrid"></div>
-  </section>
+  <!-- HOME TAB (TikTok / Reels Vertical Scroll) -->
+  <section id="tab-home" class="tab-content active"></section>
 
   <!-- VDOWNLOADER TAB -->
   <section id="tab-vdownloader" class="tab-content">
@@ -315,6 +398,7 @@
   <script>
     let cachedFiles = [];
     let currentTaskId = null;
+    let reelObserver = null;
     const playerOverlay = document.getElementById('playerOverlay');
     const videoEl = document.getElementById('vaultVideoElement');
     const playPauseBtn = document.getElementById('playPauseBtn');
@@ -324,7 +408,6 @@
     const currentTimeDisplay = document.getElementById('currentTimeDisplay');
     const totalDurationDisplay = document.getElementById('totalDurationDisplay');
 
-    // Register Service Worker & Handle Shared URLs
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('/static/sw.js').catch(err => console.log('SW Error:', err));
@@ -336,7 +419,6 @@
       loadDownloadedMedia();
       loadStorageStats();
 
-      // Check Web Share Target query params
       const urlParams = new URLSearchParams(window.location.search);
       const sharedUrl = urlParams.get('url') || urlParams.get('text');
       if (sharedUrl) {
@@ -360,6 +442,10 @@
       document.getElementById(`tab-${tabId}`).classList.add('active');
       el.classList.add('active');
 
+      if (tabId !== 'home') {
+        document.querySelectorAll('.reel-video').forEach(vid => vid.pause());
+      }
+
       if (tabId === 'home' || tabId === 'downloads') {
         loadDownloadedMedia();
       } else if (tabId === 'settings') {
@@ -374,7 +460,48 @@
       return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
     }
 
-    /* PLAYER FUNCTIONS & MEDIA SESSION */
+    function initReelObserver() {
+      if (reelObserver) reelObserver.disconnect();
+
+      reelObserver = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+          const video = entry.target.querySelector('video');
+          if (video) {
+            if (entry.isIntersecting) {
+              video.play().catch(() => {});
+            } else {
+              video.pause();
+              video.currentTime = 0;
+            }
+          }
+        });
+      }, { threshold: 0.75 });
+
+      document.querySelectorAll('.reel-card').forEach(card => reelObserver.observe(card));
+    }
+
+    function toggleReelPlay(cardEl) {
+      const video = cardEl.querySelector('video');
+      const icon = cardEl.querySelector('.reel-play-icon');
+      if (video.paused) {
+        video.play();
+        icon.style.display = 'none';
+      } else {
+        video.pause();
+        icon.style.display = 'block';
+      }
+    }
+    
+    function saveToDevice(filePath, fileName) {
+      const a = document.createElement('a');
+      a.href = filePath;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      alert(`Saving ${fileName} to your device...`);
+    }
+
     function openVideoPlayer(filePath, title) {
       document.getElementById('playerMediaTitle').textContent = title;
       videoEl.src = filePath;
@@ -445,7 +572,6 @@
       }
     }
 
-    /* FILE MANAGEMENT */
     async function deleteSingleFile(filename) {
       if (!confirm(`Delete "${filename}"?`)) return;
       try {
@@ -468,7 +594,6 @@
       } catch (e) { alert("Error renaming file."); }
     }
 
-    /* PREFERENCES & STORAGE */
     function toggleTheme(isLight) {
       if (isLight) { document.body.setAttribute('data-theme', 'light'); localStorage.setItem('theme', 'light'); }
       else { document.body.removeAttribute('data-theme'); localStorage.setItem('theme', 'dark'); }
@@ -514,7 +639,6 @@
       }
     }
 
-    /* DOWNLOADER ENGINE */
     async function startDownload() {
       const urlInput = document.getElementById('mediaUrl');
       const url = urlInput.value.trim();
@@ -595,10 +719,7 @@
       cancelBtn.textContent = 'Cancelling...';
       try {
         await fetch(`/download/cancel/${currentTaskId}`, { method: 'POST' });
-      } catch (err) {
-        // The progress stream will still reflect the real state once the
-        // server processes it — no need to surface a network hiccup here.
-      }
+      } catch (err) {}
     }
 
     async function loadDownloadedMedia() {
@@ -607,37 +728,65 @@
         cachedFiles = await res.json();
         sortAndRenderMedia();
       } catch (e) {
-        const errHTML = '<p style="color: var(--text-muted);">Failed to load media.</p>';
-        document.getElementById('homeGrid').innerHTML = errHTML;
+        const errHTML = '<p style="color: var(--text-muted); padding: 20px;">Failed to load media.</p>';
+        document.getElementById('tab-home').innerHTML = errHTML;
         document.getElementById('downloadsGrid').innerHTML = errHTML;
       }
     }
 
     function sortAndRenderMedia() {
-      const hGrid = document.getElementById('homeGrid');
+      const hGrid = document.getElementById('tab-home');
       const dGrid = document.getElementById('downloadsGrid');
 
       if (!cachedFiles || cachedFiles.length === 0) {
-        const emptyHTML = '<p style="color: var(--text-muted);">No media saved yet.</p>';
-        hGrid.innerHTML = emptyHTML; dGrid.innerHTML = emptyHTML;
+        const emptyHTML = '<p style="color: var(--text-muted); padding: 20px;">No media saved yet.</p>';
+        hGrid.innerHTML = emptyHTML; 
+        dGrid.innerHTML = emptyHTML;
         return;
       }
 
-      const activeTab = document.querySelector('.tab-content.active').id;
-      const isDownloadsTab = activeTab === 'tab-downloads';
-      const sortMode = isDownloadsTab ? document.getElementById('downloadsSort').value : document.getElementById('homeSort').value;
-      const searchQuery = (isDownloadsTab ? document.getElementById('downloadsSearch').value : document.getElementById('homeSearch').value).toLowerCase().trim();
+      const videoFiles = cachedFiles.filter(f => f.ext !== 'MP3');
+      
+      if (videoFiles.length === 0) {
+        hGrid.innerHTML = '<p style="color: var(--text-muted); padding: 20px;">No video files found in Vault.</p>';
+      } else {
+        hGrid.innerHTML = videoFiles.map(file => {
+          const escapedTitle = file.name.replace(/'/g, "\\'");
+          return `
+            <div class="reel-card" onclick="toggleReelPlay(this)">
+              <video class="reel-video" src="${file.path}" loop playsinline></video>
+              <div class="reel-play-icon">▶</div>
+              
+              <div class="reel-actions" onclick="event.stopPropagation()">
+                <button class="reel-action-btn" onclick="saveToDevice('${file.path}', '${escapedTitle}')">
+                  <span>📥</span>
+                  <span class="reel-action-label">Save</span>
+                </button>
+              </div>
+
+              <div class="reel-overlay">
+                <div class="reel-title">${file.name}</div>
+                <div class="reel-meta">${file.size_mb} MB • ${file.ext}</div>
+              </div>
+            </div>
+          `;
+        }).join('');
+
+        initReelObserver();
+      }
+
+      const sortMode = document.getElementById('downloadsSort') ? document.getElementById('downloadsSort').value : 'date';
+      const searchQuery = (document.getElementById('downloadsSearch') ? document.getElementById('downloadsSearch').value : '').toLowerCase().trim();
 
       let filteredFiles = cachedFiles.filter(f => f.name.toLowerCase().includes(searchQuery) || f.ext.toLowerCase().includes(searchQuery));
       filteredFiles.sort((a, b) => sortMode === 'size' ? b.size_bytes - a.size_bytes : b.timestamp - a.timestamp);
 
       if (filteredFiles.length === 0) {
-        const noMatch = '<p style="color: var(--text-muted);">No matching files found.</p>';
-        hGrid.innerHTML = noMatch; dGrid.innerHTML = noMatch;
+        dGrid.innerHTML = '<p style="color: var(--text-muted); padding: 20px;">No matching files found.</p>';
         return;
       }
 
-      const gridContent = filteredFiles.map(file => {
+      dGrid.innerHTML = filteredFiles.map(file => {
         const isAudio = file.ext === 'MP3';
         const escapedTitle = file.name.replace(/'/g, "\\'");
         const mediaPreview = isAudio 
@@ -655,16 +804,13 @@
               </div>
               <div style="display:flex; gap:6px; margin-top:4px;">
                 <button onclick="openVideoPlayer('${file.path}', '${escapedTitle}')" class="btn-primary" style="flex:1;">Play</button>
-                <button onclick="renameSingleFile('${escapedTitle}')" class="btn-secondary">✏️</button>
+                <button onclick="renameSingleFile('${escapedTitle}')" class="btn-secondary">✏️ Edit</button>
                 <button onclick="deleteSingleFile('${escapedTitle}')" class="btn-danger" style="width:auto; padding:8px 12px;">🗑️</button>
               </div>
             </div>
           </div>
         `;
       }).join('');
-
-      hGrid.innerHTML = gridContent;
-      dGrid.innerHTML = gridContent;
     }
   </script>
 </body>
