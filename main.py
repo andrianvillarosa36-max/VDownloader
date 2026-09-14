@@ -15,7 +15,10 @@ import yt_dlp
 app = FastAPI(title="VaultDL")
 
 DOWNLOADS_DIR = "downloads"
+INCOMING_DIR = "incoming"
+COOKIES_FILE = "cookies.txt"
 os.makedirs(DOWNLOADS_DIR, exist_ok=True)
+os.makedirs(INCOMING_DIR, exist_ok=True)
 os.makedirs("static", exist_ok=True)
 
 download_tasks = {}
@@ -28,6 +31,7 @@ class CancelledDownload(Exception):
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.mount("/media_files", StaticFiles(directory=DOWNLOADS_DIR), name="media_files")
+app.mount("/incoming_files", StaticFiles(directory=INCOMING_DIR), name="incoming_files")
 
 @app.get("/sw.js")
 def get_service_worker():
@@ -137,7 +141,7 @@ def download_twitter_vx(url: str, task_id: str, format_type: str):
         author = data.get("user_screen_name", "twitter_user")
         tweet_id = data.get("tweetID", task_id)
         filename = f"{author}_{tweet_id}.mp4"
-        filepath = os.path.join(DOWNLOADS_DIR, filename)
+        filepath = os.path.join(INCOMING_DIR, filename)
         
         file_res = requests.get(video_url, stream=True, timeout=30)
         total_size = int(file_res.headers.get('content-length', 0))
@@ -185,10 +189,10 @@ def download_twitter_vx(url: str, task_id: str, format_type: str):
 
 def cleanup_partial_files(start_ts):
     """Best-effort removal of partial download artifacts left behind by a cancelled yt-dlp run."""
-    if not os.path.exists(DOWNLOADS_DIR):
+    if not os.path.exists(INCOMING_DIR):
         return
-    for f in os.listdir(DOWNLOADS_DIR):
-        fp = os.path.join(DOWNLOADS_DIR, f)
+    for f in os.listdir(INCOMING_DIR):
+        fp = os.path.join(INCOMING_DIR, f)
         if not os.path.isfile(fp):
             continue
         if (f.endswith(".part") or f.endswith(".ytdl")) and os.path.getmtime(fp) >= start_ts - 1:
@@ -211,18 +215,22 @@ def execute_download(target_url: str, format_type: str, quality: str, task_id: s
                 return
             if success:
                 download_tasks[task_id] = {"status": "finished", "percent": 100, "eta_seconds": 0}
-            else:
-                download_tasks[task_id] = {"status": "error", "error": f"Failed: {err}"}
-            return
+                return
+            # vxtwitter failed (rate-limited, blocked, down, etc.) — fall through
+            # and let yt-dlp's own Twitter/X extractor try the original URL
+            # directly, instead of giving up on the whole download.
+            download_tasks[task_id] = {"status": "downloading", "percent": 0, "eta_seconds": 0}
 
         # Standard download options
         ydl_opts = {
-            'outtmpl': os.path.join(DOWNLOADS_DIR, '%(title)s.%(ext)s'),
+            'outtmpl': os.path.join(INCOMING_DIR, '%(title)s.%(ext)s'),
             'progress_hooks': [lambda d: progress_hook(d, task_id)],
             'quiet': True,
             'no_warnings': True,
             'restrictfilenames': True,
         }
+        if os.path.exists(COOKIES_FILE):
+            ydl_opts['cookiefile'] = COOKIES_FILE
 
         if format_type == 'mp3':
             ydl_opts.update({
@@ -255,7 +263,7 @@ def execute_download(target_url: str, format_type: str, quality: str, task_id: s
                 try:
                     # Add proper stream headers for resolved video links
                     ydl_opts['http_headers'] = {'Referer': target_url}
-                    ydl_opts['outtmpl'] = os.path.join(DOWNLOADS_DIR, f'web_stream_{task_id[:8]}.%(ext)s')
+                    ydl_opts['outtmpl'] = os.path.join(INCOMING_DIR, f'web_stream_{task_id[:8]}.%(ext)s')
 
                     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                         ydl.download([resolved_stream])
@@ -280,23 +288,6 @@ def cancel_download(task_id: str):
     return {"status": "cancel_requested"}
 
 
-async def start_download(
-    background_tasks: BackgroundTasks,
-    url: str = Query(...),
-    format_type: str = Query("mp4"),
-    quality: str = Query("best"),
-    task_id: str = Query(...)
-):
-    background_tasks.add_task(execute_download, url, format_type, quality, task_id)
-    return {"status": "started", "task_id": task_id}
-
-@app.post("/download/cancel/{task_id}")
-def cancel_download(task_id: str):
-    cancel_requested.add(task_id)
-    if task_id in download_tasks:
-        current = download_tasks.get(task_id, {})
-        download_tasks[task_id] = {**current, "status": "cancelling"}
-    return {"status": "cancel_requested"}
 @app.post("/download")
 async def start_download(
     background_tasks: BackgroundTasks,
@@ -339,6 +330,55 @@ def list_downloads():
                 })
     return files
 
+@app.get("/incoming/list")
+def list_incoming():
+    files = []
+    if os.path.exists(INCOMING_DIR):
+        for f in os.listdir(INCOMING_DIR):
+            file_path = os.path.join(INCOMING_DIR, f)
+            if os.path.isfile(file_path) and not (f.endswith(".part") or f.endswith(".ytdl")):
+                stat = os.stat(file_path)
+                ext = f.split('.')[-1].upper() if '.' in f else 'FILE'
+                files.append({
+                    "name": f,
+                    "path": f"/incoming_files/{f}",
+                    "size_mb": round(stat.st_size / (1024 * 1024), 2),
+                    "size_bytes": stat.st_size,
+                    "timestamp": stat.st_mtime,
+                    "ext": ext
+                })
+    return files
+
+@app.delete("/incoming/delete")
+def delete_incoming_file(filename: str = Query(...)):
+    safe_filename = os.path.basename(filename)
+    file_path = os.path.join(INCOMING_DIR, safe_filename)
+    if os.path.exists(file_path) and os.path.isfile(file_path):
+        os.remove(file_path)
+        return {"status": "success"}
+    raise HTTPException(status_code=404, detail="File not found")
+
+@app.post("/incoming/save")
+def save_incoming_file(filename: str = Query(...)):
+    """Moves a file out of the incoming/staging area and into the permanent downloads library."""
+    safe_filename = os.path.basename(filename)
+    src_path = os.path.join(INCOMING_DIR, safe_filename)
+    if not (os.path.exists(src_path) and os.path.isfile(src_path)):
+        raise HTTPException(status_code=404, detail="File not found")
+
+    dest_name = safe_filename
+    dest_path = os.path.join(DOWNLOADS_DIR, dest_name)
+    if os.path.exists(dest_path):
+        base, ext = os.path.splitext(safe_filename)
+        n = 1
+        while os.path.exists(dest_path):
+            dest_name = f"{base}_{n}{ext}"
+            dest_path = os.path.join(DOWNLOADS_DIR, dest_name)
+            n += 1
+
+    shutil.move(src_path, dest_path)
+    return {"status": "success", "filename": dest_name, "path": f"/media_files/{dest_name}"}
+
 @app.delete("/downloads/delete")
 def delete_single_file(filename: str = Query(...)):
     safe_filename = os.path.basename(filename)
@@ -376,12 +416,13 @@ def clear_downloads():
 def storage_info():
     total_size = 0
     count = 0
-    if os.path.exists(DOWNLOADS_DIR):
-        for f in os.listdir(DOWNLOADS_DIR):
-            fp = os.path.join(DOWNLOADS_DIR, f)
-            if os.path.isfile(fp):
-                total_size += os.path.getsize(fp)
-                count += 1
+    for d in (DOWNLOADS_DIR, INCOMING_DIR):
+        if os.path.exists(d):
+            for f in os.listdir(d):
+                fp = os.path.join(d, f)
+                if os.path.isfile(fp):
+                    total_size += os.path.getsize(fp)
+                    count += 1
     total, used, free = shutil.disk_usage("/")
     return {
         "vault_size_mb": round(total_size / (1024 * 1024), 2),

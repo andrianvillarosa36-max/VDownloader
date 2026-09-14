@@ -104,6 +104,38 @@
       filter: drop-shadow(0 2px 10px rgba(0, 0, 0, 0.6));
     }
 
+    .reel-error-overlay {
+      position: absolute;
+      inset: 0;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      background: rgba(0, 0, 0, 0.55);
+      z-index: 18;
+      text-align: center;
+      padding: 24px;
+    }
+    .reel-error-overlay.show {
+      display: flex;
+    }
+    .reel-error-text {
+      color: rgba(255, 255, 255, 0.85);
+      font-size: 0.9rem;
+      max-width: 240px;
+    }
+    .reel-error-remove-btn {
+      background: var(--danger, #e5484d);
+      color: #fff;
+      border: none;
+      border-radius: 20px;
+      padding: 9px 20px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
     /* Right-Side Action Column */
     .reel-actions {
       position: absolute;
@@ -328,13 +360,13 @@
       <h3 class="section-title">Offline Library</h3>
       <div class="sort-container">
         <label for="downloadsSort" style="font-size: 0.8rem; margin:0;">Sort:</label>
-        <select id="downloadsSort" class="sort-select" onchange="sortAndRenderMedia()">
+        <select id="downloadsSort" class="sort-select" onchange="renderDownloadsGrid()">
           <option value="date">Date (Newest)</option>
           <option value="size">File Size</option>
         </select>
       </div>
     </div>
-    <input type="text" id="downloadsSearch" class="search-bar" placeholder="🔍 Search offline downloads..." oninput="sortAndRenderMedia()" />
+    <input type="text" id="downloadsSearch" class="search-bar" placeholder="🔍 Search offline downloads..." oninput="renderDownloadsGrid()" />
     <div class="video-grid" id="downloadsGrid"></div>
   </section>
 
@@ -458,7 +490,15 @@
 
   <script>
     let cachedFiles = [];
+    let homeFiles = [];
     let currentTaskId = null;
+
+    function escapeForInlineHandler(str) {
+      return String(str)
+        .replace(/\\/g, '\\\\')
+        .replace(/'/g, "\\'")
+        .replace(/"/g, '&quot;');
+    }
     let reelObserver = null;
     const playerOverlay = document.getElementById('playerOverlay');
     const videoEl = document.getElementById('vaultVideoElement');
@@ -542,6 +582,7 @@
     }
 
     function toggleReelPlay(cardEl) {
+      if (cardEl.querySelector('.reel-error-overlay.show')) return;
       const video = cardEl.querySelector('video');
       const icon = cardEl.querySelector('.reel-play-icon');
       if (video.paused) {
@@ -551,6 +592,27 @@
         video.pause();
         icon.style.display = 'block';
       }
+    }
+
+    function handleReelVideoError(videoEl) {
+      const card = videoEl.closest('.reel-card');
+      if (!card) return;
+      const overlay = card.querySelector('.reel-error-overlay');
+      if (overlay) overlay.classList.add('show');
+      const seek = card.querySelector('.reel-seek');
+      if (seek) seek.style.display = 'none';
+      const playIcon = card.querySelector('.reel-play-icon');
+      if (playIcon) playIcon.style.display = 'none';
+    }
+
+    async function removeIncomingFile(fileName, btnEl) {
+      if (btnEl) { btnEl.disabled = true; btnEl.textContent = 'Removing...'; }
+      try {
+        await fetch(`/incoming/delete?filename=${encodeURIComponent(fileName)}`, { method: 'DELETE' });
+      } catch (e) {
+        // Fall through — the refresh below reflects whatever the server actually has.
+      }
+      loadDownloadedMedia();
     }
 
     function updateReelSeek(videoEl) {
@@ -571,12 +633,9 @@
       rangeEl.style.setProperty('--seek-pct', rangeEl.value + '%');
     }
 
-    async function saveToDevice(filePath, fileName, btnEl) {
-      const label = btnEl ? btnEl.querySelector('.reel-action-label') : null;
-      const originalLabel = label ? label.textContent : null;
-
-      if (btnEl) btnEl.disabled = true;
-      if (label) label.textContent = 'Saving...';
+    async function saveToPhone(filePath, fileName, btnEl) {
+      const originalText = btnEl ? btnEl.textContent : null;
+      if (btnEl) { btnEl.disabled = true; btnEl.textContent = 'Saving...'; }
 
       try {
         const res = await fetch(filePath);
@@ -592,14 +651,53 @@
         document.body.removeChild(a);
         URL.revokeObjectURL(blobUrl);
 
-        if (label) label.textContent = 'Saved';
-        if (btnEl) btnEl.classList.add('saved');
+        if (btnEl) btnEl.textContent = '✅ Saved';
       } catch (e) {
-        if (label) label.textContent = 'Failed';
+        if (btnEl) btnEl.textContent = '❌ Failed';
       } finally {
         setTimeout(() => {
+          if (btnEl) { btnEl.textContent = originalText; btnEl.disabled = false; }
+        }, 1800);
+      }
+    }
+
+    async function saveReelVideo(filePath, fileName, btnEl) {
+      const label = btnEl ? btnEl.querySelector('.reel-action-label') : null;
+      const originalLabel = label ? label.textContent : null;
+
+      if (btnEl) btnEl.disabled = true;
+      if (label) label.textContent = 'Saving...';
+
+      // Best-effort copy to the device — this is a bonus on top of the move
+      // below, so a failure here shouldn't block moving the file into Downloads.
+      try {
+        const res = await fetch(filePath);
+        if (res.ok) {
+          const blob = await res.blob();
+          const blobUrl = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = blobUrl;
+          a.download = fileName;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(blobUrl);
+        }
+      } catch (e) {
+        // non-fatal
+      }
+
+      try {
+        const moveRes = await fetch(`/incoming/save?filename=${encodeURIComponent(fileName)}`, { method: 'POST' });
+        if (!moveRes.ok) throw new Error('Move failed');
+        if (label) label.textContent = 'Saved';
+        if (btnEl) btnEl.classList.add('saved');
+        setTimeout(() => loadDownloadedMedia(), 500);
+      } catch (e) {
+        if (label) label.textContent = 'Failed';
+        setTimeout(() => {
           if (label && originalLabel) label.textContent = originalLabel;
-          if (btnEl) { btnEl.classList.remove('saved'); btnEl.disabled = false; }
+          if (btnEl) btnEl.disabled = false;
         }, 1800);
       }
     }
@@ -826,9 +924,14 @@
 
     async function loadDownloadedMedia() {
       try {
-        const res = await fetch('/downloads/list');
-        cachedFiles = await res.json();
-        sortAndRenderMedia();
+        const [incomingRes, downloadsRes] = await Promise.all([
+          fetch('/incoming/list'),
+          fetch('/downloads/list')
+        ]);
+        homeFiles = await incomingRes.json();
+        cachedFiles = await downloadsRes.json();
+        renderHomeFeed();
+        renderDownloadsGrid();
       } catch (e) {
         const errHTML = '<p style="color: var(--text-muted); padding: 20px;">Failed to load media.</p>';
         document.getElementById('tab-home').innerHTML = errHTML;
@@ -836,63 +939,59 @@
       }
     }
 
-    function sortAndRenderMedia() {
+    function renderHomeFeed() {
       const hGrid = document.getElementById('tab-home');
-      const dGrid = document.getElementById('downloadsGrid');
+      const videoFiles = (homeFiles || []).filter(f => f.ext !== 'MP3');
 
-      if (!cachedFiles || cachedFiles.length === 0) {
-        const emptyHTML = '<p style="color: var(--text-muted); padding: 20px;">No media saved yet.</p>';
-        hGrid.innerHTML = emptyHTML; 
-        dGrid.innerHTML = emptyHTML;
+      if (videoFiles.length === 0) {
+        hGrid.innerHTML = '<p style="color: var(--text-muted); padding: 20px;">Nothing new yet — download something from VDownloader and it\'ll show up here.</p>';
         return;
       }
 
-      const videoFiles = cachedFiles.filter(f => f.ext !== 'MP3');
-      
-      if (videoFiles.length === 0) {
-        hGrid.innerHTML = '<p style="color: var(--text-muted); padding: 20px;">No video files found in Vault.</p>';
-      } else {
-        hGrid.innerHTML = videoFiles.map(file => {
-          const escapedTitle = file.name.replace(/'/g, "\\'");
-          return `
-            <div class="reel-card" onclick="toggleReelPlay(this)">
-              <video class="reel-video" src="${file.path}" loop playsinline ontimeupdate="updateReelSeek(this)"></video>
-              <div class="reel-play-icon">▶</div>
+      hGrid.innerHTML = videoFiles.map(file => {
+        const escapedTitle = escapeForInlineHandler(file.name);
+        return `
+          <div class="reel-card" onclick="toggleReelPlay(this)">
+            <video class="reel-video" src="${file.path}" loop playsinline
+                   ontimeupdate="updateReelSeek(this)"
+                   onerror="handleReelVideoError(this)"></video>
+            <div class="reel-play-icon">▶</div>
 
-              <div class="reel-actions" onclick="event.stopPropagation()">
-                <button class="reel-action-btn" onclick="saveToDevice('${file.path}', '${escapedTitle}', this)">
-                  <span class="reel-action-icon">
-                    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-                  </span>
-                  <span class="reel-action-label">Save</span>
-                </button>
-                <button class="reel-action-btn" onclick="renameSingleFile('${escapedTitle}')">
-                  <span class="reel-action-icon">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
-                  </span>
-                  <span class="reel-action-label">Edit</span>
-                </button>
-                <button class="reel-action-btn" onclick="deleteSingleFile('${escapedTitle}')">
-                  <span class="reel-action-icon">
-                    <svg width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
-                  </span>
-                  <span class="reel-action-label">Delete</span>
-                </button>
-              </div>
-
-              <div class="reel-overlay">
-                <div class="reel-title">${file.name}</div>
-                <div class="reel-meta">${file.size_mb} MB • ${file.ext}</div>
-              </div>
-
-              <input type="range" class="reel-seek" min="0" max="100" value="0" step="0.1"
-                     onclick="event.stopPropagation()"
-                     oninput="seekReel(this)">
+            <div class="reel-error-overlay">
+              <div class="reel-error-text">This video can't be played — it may be corrupted or incomplete.</div>
+              <button class="reel-error-remove-btn" onclick="event.stopPropagation(); removeIncomingFile('${escapedTitle}', this)">Remove</button>
             </div>
-          `;
-        }).join('');
 
-        initReelObserver();
+            <div class="reel-actions" onclick="event.stopPropagation()">
+              <button class="reel-action-btn" onclick="saveReelVideo('${file.path}', '${escapedTitle}', this)">
+                <span class="reel-action-icon">
+                  <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                </span>
+                <span class="reel-action-label">Save</span>
+              </button>
+            </div>
+
+            <div class="reel-overlay">
+              <div class="reel-title">${file.name}</div>
+              <div class="reel-meta">${file.size_mb} MB • ${file.ext}</div>
+            </div>
+
+            <input type="range" class="reel-seek" min="0" max="100" value="0" step="0.1"
+                   onclick="event.stopPropagation()"
+                   oninput="seekReel(this)">
+          </div>
+        `;
+      }).join('');
+
+      initReelObserver();
+    }
+
+    function renderDownloadsGrid() {
+      const dGrid = document.getElementById('downloadsGrid');
+
+      if (!cachedFiles || cachedFiles.length === 0) {
+        dGrid.innerHTML = '<p style="color: var(--text-muted); padding: 20px;">No media saved yet.</p>';
+        return;
       }
 
       const sortMode = document.getElementById('downloadsSort') ? document.getElementById('downloadsSort').value : 'date';
@@ -908,9 +1007,9 @@
 
       dGrid.innerHTML = filteredFiles.map(file => {
         const isAudio = file.ext === 'MP3';
-        const escapedTitle = file.name.replace(/'/g, "\\'");
-        const mediaPreview = isAudio 
-          ? `<div class="media-thumbnail-wrapper"><span style="font-size:3rem;">🎵</span></div>` 
+        const escapedTitle = escapeForInlineHandler(file.name);
+        const mediaPreview = isAudio
+          ? `<div class="media-thumbnail-wrapper"><span style="font-size:3rem;">🎵</span></div>`
           : `<div class="media-thumbnail-wrapper" onclick="openVideoPlayer('${file.path}', '${escapedTitle}')"><span class="play-badge">▶</span></div>`;
 
         return `
@@ -927,6 +1026,7 @@
                 <button onclick="renameSingleFile('${escapedTitle}')" class="btn-secondary">✏️ Edit</button>
                 <button onclick="deleteSingleFile('${escapedTitle}')" class="btn-danger" style="width:auto; padding:8px 12px;">🗑️</button>
               </div>
+              <button onclick="saveToPhone('${file.path}', '${escapedTitle}', this)" class="btn-secondary" style="width:100%; margin-top:6px;">📲 Save to phone</button>
             </div>
           </div>
         `;
