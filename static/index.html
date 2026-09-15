@@ -337,20 +337,7 @@
 
       <button class="btn-primary" onclick="startDownload()">Start Download</button>
 
-      <div id="progressBox" class="progress-container">
-        <div class="progress-stats">
-          <span id="progressPercent">0%</span>
-          <span id="progressSize">0 MB / 0 MB</span>
-        </div>
-        <div class="progress-bar-bg">
-          <div id="progressBarFill" class="progress-bar-fill"></div>
-        </div>
-        <div class="progress-stats">
-          <span id="downloadStatus">Connecting...</span>
-          <span id="progressEta">ETA: --s</span>
-        </div>
-        <button id="cancelDownloadBtn" class="btn-danger" style="margin-top: 10px;" onclick="cancelDownload()">Cancel Download</button>
-      </div>
+      <div id="downloadQueueList"></div>
     </div>
   </section>
 
@@ -491,7 +478,6 @@
   <script>
     let cachedFiles = [];
     let homeFiles = [];
-    let currentTaskId = null;
 
     function escapeForInlineHandler(str) {
       return String(str)
@@ -844,82 +830,94 @@
       const url = urlInput.value.trim();
       const formatType = document.getElementById('formatType').value;
       const quality = document.getElementById('quality').value;
-      const progressBox = document.getElementById('progressBox');
-      const progressBarFill = document.getElementById('progressBarFill');
-      const progressPercent = document.getElementById('progressPercent');
-      const progressSize = document.getElementById('progressSize');
-      const progressEta = document.getElementById('progressEta');
-      const downloadStatus = document.getElementById('downloadStatus');
-      const cancelBtn = document.getElementById('cancelDownloadBtn');
+      const queueList = document.getElementById('downloadQueueList');
 
       if (!url) { alert("Paste a valid media URL."); return; }
 
       const taskId = "task_" + Date.now();
-      currentTaskId = taskId;
-      progressBox.style.display = 'block';
-      progressBarFill.style.width = '0%';
-      downloadStatus.textContent = 'Initializing stream...';
-      cancelBtn.style.display = 'block';
-      cancelBtn.disabled = false;
-      cancelBtn.textContent = 'Cancel Download';
+      urlInput.value = "";
+
+      queueList.insertAdjacentHTML('beforeend', `
+        <div class="progress-container" style="display:block;" data-task-id="${taskId}">
+          <div class="progress-stats">
+            <span class="row-label" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:70%;">${url}</span>
+            <span class="row-percent">0%</span>
+          </div>
+          <div class="progress-bar-bg">
+            <div class="row-bar-fill progress-bar-fill"></div>
+          </div>
+          <div class="progress-stats">
+            <span class="row-status">Queued...</span>
+            <span class="row-eta">ETA: --s</span>
+          </div>
+          <button class="btn-danger row-cancel-btn" style="margin-top: 10px;">Cancel</button>
+        </div>
+      `);
+
+      const row = queueList.querySelector(`[data-task-id="${taskId}"]`);
+      const barFill = row.querySelector('.row-bar-fill');
+      const percentEl = row.querySelector('.row-percent');
+      const statusEl = row.querySelector('.row-status');
+      const etaEl = row.querySelector('.row-eta');
+      const cancelBtn = row.querySelector('.row-cancel-btn');
+      cancelBtn.onclick = () => cancelQueuedDownload(taskId, cancelBtn);
 
       const eventSource = new EventSource(`/download/progress/${taskId}`);
       eventSource.onmessage = (event) => {
         const data = JSON.parse(event.data);
-        if (data.status === 'downloading') {
-          progressBarFill.style.width = `${data.percent}%`;
-          progressPercent.textContent = `${data.percent}%`;
-          progressSize.textContent = `${data.downloaded_mb || 0} MB / ${data.total_mb || 0} MB`;
-          progressEta.textContent = `ETA: ${data.eta_seconds || 0}s`;
-          downloadStatus.textContent = 'Downloading...';
+        if (data.status === 'queued') {
+          statusEl.textContent = `Queued — position ${data.queue_position || 1}`;
+        } else if (data.status === 'starting') {
+          statusEl.textContent = 'Starting...';
+        } else if (data.status === 'downloading') {
+          barFill.style.width = `${data.percent}%`;
+          percentEl.textContent = `${data.percent}%`;
+          statusEl.textContent = `Downloading — ${data.downloaded_mb || 0} MB / ${data.total_mb || 0} MB`;
+          etaEl.textContent = `ETA: ${data.eta_seconds || 0}s`;
         } else if (data.status === 'cancelling') {
-          downloadStatus.textContent = 'Cancelling...';
+          statusEl.textContent = 'Cancelling...';
           cancelBtn.disabled = true;
         } else if (data.status === 'cancelled') {
-          downloadStatus.textContent = 'Cancelled';
+          statusEl.textContent = 'Cancelled';
           cancelBtn.style.display = 'none';
-          currentTaskId = null;
           eventSource.close();
+          setTimeout(() => row.remove(), 2500);
         } else if (data.status === 'finished') {
-          progressBarFill.style.width = '100%';
-          progressPercent.textContent = '100%';
-          downloadStatus.textContent = 'Completed!';
+          barFill.style.width = '100%';
+          percentEl.textContent = '100%';
+          statusEl.textContent = 'Completed!';
           cancelBtn.style.display = 'none';
-          currentTaskId = null;
           eventSource.close();
           loadDownloadedMedia();
+          setTimeout(() => row.remove(), 2500);
         } else if (data.status === 'error') {
-          downloadStatus.textContent = data.error || 'Download error';
+          statusEl.textContent = data.error || 'Download error';
           cancelBtn.style.display = 'none';
-          currentTaskId = null;
           eventSource.close();
         }
       };
 
       try {
         const res = await fetch(`/download?url=${encodeURIComponent(url)}&format_type=${formatType}&quality=${quality}&task_id=${taskId}`, { method: 'POST' });
-        if (res.ok) {
-          urlInput.value = "";
-        } else {
-          downloadStatus.textContent = "Failed to start download server request";
+        if (!res.ok) {
+          statusEl.textContent = "Failed to start download server request";
           cancelBtn.style.display = 'none';
           eventSource.close();
         }
       } catch (err) {
-        downloadStatus.textContent = "Network Error";
+        statusEl.textContent = "Network Error";
         cancelBtn.style.display = 'none';
         eventSource.close();
       }
     }
 
-    async function cancelDownload() {
-      if (!currentTaskId) return;
-      const cancelBtn = document.getElementById('cancelDownloadBtn');
-      cancelBtn.disabled = true;
-      cancelBtn.textContent = 'Cancelling...';
+    async function cancelQueuedDownload(taskId, btnEl) {
+      if (btnEl) { btnEl.disabled = true; btnEl.textContent = 'Cancelling...'; }
       try {
-        await fetch(`/download/cancel/${currentTaskId}`, { method: 'POST' });
-      } catch (err) {}
+        await fetch(`/download/cancel/${taskId}`, { method: 'POST' });
+      } catch (err) {
+        // The SSE stream will still reflect the real state once the server catches up.
+      }
     }
 
     async function loadDownloadedMedia() {

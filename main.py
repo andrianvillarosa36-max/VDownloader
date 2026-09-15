@@ -6,9 +6,10 @@ import requests
 import re
 import time
 import subprocess
-from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 import yt_dlp
 
@@ -23,11 +24,44 @@ os.makedirs("static", exist_ok=True)
 
 download_tasks = {}
 cancel_requested = set()
+download_queue = None
+queue_order = []  # task_ids waiting their turn, in FIFO order — used to show queue position
 
 
 class CancelledDownload(Exception):
     """Raised internally when a user cancels an in-progress download."""
     pass
+
+
+async def download_worker():
+    """Pulls one download at a time off the queue and runs it to completion
+    before starting the next — this is what makes downloads queue instead
+    of all racing to run concurrently."""
+    while True:
+        url, format_type, quality, task_id = await download_queue.get()
+        if task_id in queue_order:
+            queue_order.remove(task_id)
+
+        if task_id in cancel_requested:
+            # Cancelled while still waiting in line — skip it entirely.
+            cancel_requested.discard(task_id)
+            download_tasks[task_id] = {"status": "cancelled", "percent": 0, "eta_seconds": 0}
+            download_queue.task_done()
+            continue
+
+        try:
+            await run_in_threadpool(execute_download, url, format_type, quality, task_id)
+        except Exception as e:
+            download_tasks[task_id] = {"status": "error", "error": f"Unexpected error: {str(e)}"}
+        finally:
+            download_queue.task_done()
+
+
+@app.on_event("startup")
+async def start_download_worker():
+    global download_queue
+    download_queue = asyncio.Queue()
+    asyncio.create_task(download_worker())
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.mount("/media_files", StaticFiles(directory=DOWNLOADS_DIR), name="media_files")
@@ -282,28 +316,38 @@ def execute_download(target_url: str, format_type: str, quality: str, task_id: s
 def cancel_download(task_id: str):
     if task_id not in download_tasks:
         raise HTTPException(status_code=404, detail="Unknown task_id")
-    cancel_requested.add(task_id)
     current = download_tasks.get(task_id, {})
-    download_tasks[task_id] = {**current, "status": "cancelling"}
+    if current.get("status") == "queued":
+        if task_id in queue_order:
+            queue_order.remove(task_id)
+        cancel_requested.add(task_id)  # belt-and-suspenders in case the worker already dequeued it
+        download_tasks[task_id] = {"status": "cancelled", "percent": 0, "eta_seconds": 0}
+    else:
+        cancel_requested.add(task_id)
+        download_tasks[task_id] = {**current, "status": "cancelling"}
     return {"status": "cancel_requested"}
 
 
 @app.post("/download")
 async def start_download(
-    background_tasks: BackgroundTasks,
     url: str = Query(...),
     format_type: str = Query("mp4"),
     quality: str = Query("best"),
     task_id: str = Query(...)
 ):
-    background_tasks.add_task(execute_download, url, format_type, quality, task_id)
-    return {"status": "started", "task_id": task_id}
+    queue_order.append(task_id)
+    position = len(queue_order)
+    download_tasks[task_id] = {"status": "queued", "percent": 0, "queue_position": position}
+    await download_queue.put((url, format_type, quality, task_id))
+    return {"status": "queued", "task_id": task_id, "queue_position": position}
 
 @app.get("/download/progress/{task_id}")
 async def get_progress(task_id: str):
     async def event_generator():
         while True:
             task = download_tasks.get(task_id, {"status": "initializing", "percent": 0})
+            if task.get("status") == "queued" and task_id in queue_order:
+                task = {**task, "queue_position": queue_order.index(task_id) + 1}
             yield f"data: {json.dumps(task)}\n\n"
             if task.get("status") in ["finished", "error", "cancelled"]:
                 break
