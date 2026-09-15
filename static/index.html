@@ -38,7 +38,6 @@
     .tab-content { display: none; padding: 16px; }
     .tab-content.active { display: block; }
 
-    /* Reels / TikTok Style Feed for Home Tab */
     #tab-home.active {
       display: block;
       padding: 0;
@@ -136,7 +135,6 @@
       cursor: pointer;
     }
 
-    /* Right-Side Action Column */
     .reel-actions {
       position: absolute;
       right: 12px;
@@ -274,7 +272,7 @@
     .video-title { font-size: 0.9rem; font-weight: 600; word-break: break-word; line-height: 1.3; }
     .video-meta { display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--text-muted); }
 
-    .bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; height: var(--nav-height); background: var(--card-bg); border-top: 1px solid var(--border-color); display: flex; justify-content: space-around; align-items: center; z-index: 200; }
+    .bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; height: var(--nav-height); background: var(--card-bg); border-top: 1px solid var(--border-color); display: flex; justify-space-around; align-items: center; z-index: 200; }
     .nav-item { display: flex; flex-direction: column; align-items: center; color: var(--text-muted); background: none; border: none; font-size: 0.75rem; gap: 4px; cursor: pointer; }
     .nav-item.active { color: var(--accent); }
 
@@ -478,26 +476,18 @@
   <script>
     let cachedFiles = [];
     let homeFiles = [];
+    let currentDownloadsList = [];
+    let currentHomeList = [];
 
-    function escapeForInlineHandler(str) {
+    function escapeHtml(str) {
       return String(str)
-        .replace(/\\/g, '\\\\')
-        .replace(/'/g, "\\'")
-        .replace(/"/g, '&quot;');
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
     }
 
-    // A simple, deterministic string hash. Used to give the Home feed a
-    // shuffled-looking order that stays stable across re-renders — real
-    // Math.random() would reshuffle (and visually jump around) every time
-    // the list refreshes, which happens often (new downloads, saves, etc).
-    function hashCode(str) {
-      let hash = 0;
-      for (let i = 0; i < str.length; i++) {
-        hash = (hash << 5) - hash + str.charCodeAt(i);
-        hash |= 0;
-      }
-      return hash;
-    }
     let reelObserver = null;
     const playerOverlay = document.getElementById('playerOverlay');
     const videoEl = document.getElementById('vaultVideoElement');
@@ -608,9 +598,7 @@
       if (btnEl) { btnEl.disabled = true; btnEl.textContent = 'Removing...'; }
       try {
         await fetch(`/incoming/delete?filename=${encodeURIComponent(fileName)}`, { method: 'DELETE' });
-      } catch (e) {
-        // Fall through — the refresh below reflects whatever the server actually has.
-      }
+      } catch (e) {}
       loadDownloadedMedia();
     }
 
@@ -618,7 +606,7 @@
       if (!videoEl.duration || isNaN(videoEl.duration)) return;
       const card = videoEl.closest('.reel-card');
       const seek = card ? card.querySelector('.reel-seek') : null;
-      if (!seek || seek.matches(':active')) return; // don't fight the user's drag
+      if (!seek || seek.matches(':active')) return;
       const pct = (videoEl.currentTime / videoEl.duration) * 100;
       seek.value = pct;
       seek.style.setProperty('--seek-pct', pct + '%');
@@ -667,8 +655,6 @@
       if (btnEl) btnEl.disabled = true;
       if (label) label.textContent = 'Saving...';
 
-      // Best-effort copy to the device — this is a bonus on top of the move
-      // below, so a failure here shouldn't block moving the file into Downloads.
       try {
         const res = await fetch(filePath);
         if (res.ok) {
@@ -682,9 +668,7 @@
           document.body.removeChild(a);
           URL.revokeObjectURL(blobUrl);
         }
-      } catch (e) {
-        // non-fatal
-      }
+      } catch (e) {}
 
       try {
         const moveRes = await fetch(`/incoming/save?filename=${encodeURIComponent(fileName)}`, { method: 'POST' });
@@ -858,7 +842,7 @@
       queueList.insertAdjacentHTML('beforeend', `
         <div class="progress-container" style="display:block;" data-task-id="${taskId}">
           <div class="progress-stats">
-            <span class="row-label" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:70%;">${url}</span>
+            <span class="row-label" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:70%;">${escapeHtml(url)}</span>
             <span class="row-percent">0%</span>
           </div>
           <div class="progress-bar-bg">
@@ -933,9 +917,7 @@
       if (btnEl) { btnEl.disabled = true; btnEl.textContent = 'Cancelling...'; }
       try {
         await fetch(`/download/cancel/${taskId}`, { method: 'POST' });
-      } catch (err) {
-        // The SSE stream will still reflect the real state once the server catches up.
-      }
+      } catch (err) {}
     }
 
     async function loadDownloadedMedia() {
@@ -958,15 +940,21 @@
     function renderHomeFeed() {
       const hGrid = document.getElementById('tab-home');
       const videoFiles = (homeFiles || []).filter(f => f.ext !== 'MP3');
-      videoFiles.sort((a, b) => hashCode(a.name) - hashCode(b.name));
+
+      // Randomize videos on home load using Fisher-Yates shuffle
+      for (let i = videoFiles.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [videoFiles[i], videoFiles[j]] = [videoFiles[j], videoFiles[i]];
+      }
+
+      currentHomeList = videoFiles;
 
       if (videoFiles.length === 0) {
         hGrid.innerHTML = '<p style="color: var(--text-muted); padding: 20px;">Nothing new yet — download something from VDownloader and it\'ll show up here.</p>';
         return;
       }
 
-      hGrid.innerHTML = videoFiles.map(file => {
-        const escapedTitle = escapeForInlineHandler(file.name);
+      hGrid.innerHTML = videoFiles.map((file, idx) => {
         return `
           <div class="reel-card" onclick="toggleReelPlay(this)">
             <video class="reel-video" src="${file.path}" loop playsinline
@@ -976,11 +964,11 @@
 
             <div class="reel-error-overlay">
               <div class="reel-error-text">This video can't be played — it may be corrupted or incomplete.</div>
-              <button class="reel-error-remove-btn" onclick="event.stopPropagation(); removeIncomingFile('${escapedTitle}', this)">Remove</button>
+              <button class="reel-error-remove-btn" onclick="event.stopPropagation(); removeHomeFile(${idx}, this)">Remove</button>
             </div>
 
             <div class="reel-actions" onclick="event.stopPropagation()">
-              <button class="reel-action-btn" onclick="saveReelVideo('${file.path}', '${escapedTitle}', this)">
+              <button class="reel-action-btn" onclick="saveHomeFile(${idx}, this)">
                 <span class="reel-action-icon">
                   <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
                 </span>
@@ -989,7 +977,7 @@
             </div>
 
             <div class="reel-overlay">
-              <div class="reel-title">${file.name}</div>
+              <div class="reel-title">${escapeHtml(file.name)}</div>
               <div class="reel-meta">${file.size_mb} MB • ${file.ext}</div>
             </div>
 
@@ -1001,6 +989,16 @@
       }).join('');
 
       initReelObserver();
+    }
+
+    function removeHomeFile(index, btnEl) {
+      const file = currentHomeList[index];
+      if (file) removeIncomingFile(file.name, btnEl);
+    }
+
+    function saveHomeFile(index, btnEl) {
+      const file = currentHomeList[index];
+      if (file) saveReelVideo(file.path, file.name, btnEl);
     }
 
     function renderDownloadsGrid() {
@@ -1017,37 +1015,58 @@
       let filteredFiles = cachedFiles.filter(f => f.name.toLowerCase().includes(searchQuery) || f.ext.toLowerCase().includes(searchQuery));
       filteredFiles.sort((a, b) => sortMode === 'size' ? b.size_bytes - a.size_bytes : b.timestamp - a.timestamp);
 
+      currentDownloadsList = filteredFiles;
+
       if (filteredFiles.length === 0) {
         dGrid.innerHTML = '<p style="color: var(--text-muted); padding: 20px;">No matching files found.</p>';
         return;
       }
 
-      dGrid.innerHTML = filteredFiles.map(file => {
+      dGrid.innerHTML = filteredFiles.map((file, idx) => {
         const isAudio = file.ext === 'MP3';
-        const escapedTitle = escapeForInlineHandler(file.name);
         const mediaPreview = isAudio
           ? `<div class="media-thumbnail-wrapper"><span style="font-size:3rem;">🎵</span></div>`
-          : `<div class="media-thumbnail-wrapper" onclick="openVideoPlayer('${file.path}', '${escapedTitle}')"><span class="play-badge">▶</span></div>`;
+          : `<div class="media-thumbnail-wrapper" onclick="playDownload(${idx})"><span class="play-badge">▶</span></div>`;
 
         return `
           <div class="video-card">
             ${mediaPreview}
             <div class="video-info">
-              <div class="video-title">${file.name}</div>
+              <div class="video-title">${escapeHtml(file.name)}</div>
               <div class="video-meta">
                 <span>Size: ${file.size_mb} MB</span>
                 <span>Type: ${file.ext}</span>
               </div>
               <div style="display:flex; gap:6px; margin-top:4px;">
-                <button onclick="openVideoPlayer('${file.path}', '${escapedTitle}')" class="btn-primary" style="flex:1;">Play</button>
-                <button onclick="renameSingleFile('${escapedTitle}')" class="btn-secondary">✏️ Edit</button>
-                <button onclick="deleteSingleFile('${escapedTitle}')" class="btn-danger" style="width:auto; padding:8px 12px;">🗑️</button>
+                <button onclick="playDownload(${idx})" class="btn-primary" style="flex:1;">Play</button>
+                <button onclick="renameDownload(${idx})" class="btn-secondary">✏️ Edit</button>
+                <button onclick="deleteDownload(${idx})" class="btn-danger" style="width:auto; padding:8px 12px;">🗑️</button>
               </div>
-              <button onclick="saveToPhone('${file.path}', '${escapedTitle}', this)" class="btn-secondary" style="width:100%; margin-top:6px;">📲 Save to phone</button>
+              <button onclick="saveDownloadToPhone(${idx}, this)" class="btn-secondary" style="width:100%; margin-top:6px;">📲 Save to phone</button>
             </div>
           </div>
         `;
       }).join('');
+    }
+
+    function playDownload(index) {
+      const file = currentDownloadsList[index];
+      if (file) openVideoPlayer(file.path, file.name);
+    }
+
+    function renameDownload(index) {
+      const file = currentDownloadsList[index];
+      if (file) renameSingleFile(file.name);
+    }
+
+    function deleteDownload(index) {
+      const file = currentDownloadsList[index];
+      if (file) deleteSingleFile(file.name);
+    }
+
+    function saveDownloadToPhone(index, btnEl) {
+      const file = currentDownloadsList[index];
+      if (file) saveToPhone(file.path, file.name, btnEl);
     }
   </script>
 </body>

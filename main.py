@@ -6,6 +6,7 @@ import requests
 import re
 import time
 import subprocess
+from urllib.parse import quote
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import StreamingResponse, FileResponse
@@ -34,16 +35,13 @@ class CancelledDownload(Exception):
 
 
 async def download_worker():
-    """Pulls one download at a time off the queue and runs it to completion
-    before starting the next — this is what makes downloads queue instead
-    of all racing to run concurrently."""
+    """Pulls one download at a time off the queue and runs it to completion."""
     while True:
         url, format_type, quality, task_id = await download_queue.get()
         if task_id in queue_order:
             queue_order.remove(task_id)
 
         if task_id in cancel_requested:
-            # Cancelled while still waiting in line — skip it entirely.
             cancel_requested.discard(task_id)
             download_tasks[task_id] = {"status": "cancelled", "percent": 0, "eta_seconds": 0}
             download_queue.task_done()
@@ -119,7 +117,6 @@ def progress_hook(d, task_id):
         }
 
 def resolve_hidden_media_stream(url: str):
-    """Scrapes raw web pages and hidden iframes for direct .m3u8 or .mp4 stream links."""
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Referer": url
@@ -128,12 +125,10 @@ def resolve_hidden_media_stream(url: str):
         res = requests.get(url, headers=headers, timeout=10)
         html = res.text
         
-        # 1. Search directly for .m3u8 or .mp4 URLs embedded in JS or HTML
         direct_streams = re.findall(r'https?://[^\s\'"<>]+?\.(?:m3u8|mp4)[^\s\'"<>]*', html)
         if direct_streams:
             return direct_streams[0]
             
-        # 2. If not found, inspect all embedded iframe players on the page
         iframes = re.findall(r'<iframe[^>]+src=["\']([^"\']+)["\']', html, re.IGNORECASE)
         for iframe_url in iframes:
             if iframe_url.startswith('//'):
@@ -151,7 +146,6 @@ def resolve_hidden_media_stream(url: str):
     return None
 
 def download_twitter_vx(url: str, task_id: str, format_type: str):
-    """Bypasses Twitter/X guest API restrictions via vxTwitter API."""
     try:
         download_tasks[task_id] = {"status": "downloading", "percent": 0, "eta_seconds": 0}
         
@@ -222,7 +216,6 @@ def download_twitter_vx(url: str, task_id: str, format_type: str):
         return False, str(e)
 
 def cleanup_partial_files(start_ts):
-    """Best-effort removal of partial download artifacts left behind by a cancelled yt-dlp run."""
     if not os.path.exists(INCOMING_DIR):
         return
     for f in os.listdir(INCOMING_DIR):
@@ -240,7 +233,6 @@ def execute_download(target_url: str, format_type: str, quality: str, task_id: s
     start_ts = time.time()
 
     try:
-        # Twitter/X override
         if "twitter.com" in target_url.lower() or "x.com" in target_url.lower():
             try:
                 success, err = download_twitter_vx(target_url, task_id, format_type)
@@ -250,12 +242,8 @@ def execute_download(target_url: str, format_type: str, quality: str, task_id: s
             if success:
                 download_tasks[task_id] = {"status": "finished", "percent": 100, "eta_seconds": 0}
                 return
-            # vxtwitter failed (rate-limited, blocked, down, etc.) — fall through
-            # and let yt-dlp's own Twitter/X extractor try the original URL
-            # directly, instead of giving up on the whole download.
             download_tasks[task_id] = {"status": "downloading", "percent": 0, "eta_seconds": 0}
 
-        # Standard download options
         ydl_opts = {
             'outtmpl': os.path.join(INCOMING_DIR, '%(title)s.%(ext)s'),
             'progress_hooks': [lambda d: progress_hook(d, task_id)],
@@ -290,12 +278,10 @@ def execute_download(target_url: str, format_type: str, quality: str, task_id: s
         except CancelledDownload:
             download_tasks[task_id] = {"status": "cancelled", "percent": 0, "eta_seconds": 0}
             cleanup_partial_files(start_ts)
-        except Exception as initial_error:
-            # Auto-Resolver Step: If yt-dlp fails to recognize the webpage, attempt stream scraping
+        except Exception:
             resolved_stream = resolve_hidden_media_stream(target_url)
             if resolved_stream:
                 try:
-                    # Add proper stream headers for resolved video links
                     ydl_opts['http_headers'] = {'Referer': target_url}
                     ydl_opts['outtmpl'] = os.path.join(INCOMING_DIR, f'web_stream_{task_id[:8]}.%(ext)s')
 
@@ -306,9 +292,9 @@ def execute_download(target_url: str, format_type: str, quality: str, task_id: s
                     download_tasks[task_id] = {"status": "cancelled", "percent": 0, "eta_seconds": 0}
                     cleanup_partial_files(start_ts)
                 except Exception as stream_error:
-                    download_tasks[task_id] = {"status": "error", "error": f"Stream extracted but failed to download: {str(stream_error)}"}
+                    download_tasks[task_id] = {"status": "error", "error": f"Stream extracted but failed: {str(stream_error)}"}
             else:
-                download_tasks[task_id] = {"status": "error", "error": f"Unsupported website and no video stream could be found automatically."}
+                download_tasks[task_id] = {"status": "error", "error": "Unsupported website and no video stream found."}
     finally:
         cancel_requested.discard(task_id)
 
@@ -320,13 +306,12 @@ def cancel_download(task_id: str):
     if current.get("status") == "queued":
         if task_id in queue_order:
             queue_order.remove(task_id)
-        cancel_requested.add(task_id)  # belt-and-suspenders in case the worker already dequeued it
+        cancel_requested.add(task_id)
         download_tasks[task_id] = {"status": "cancelled", "percent": 0, "eta_seconds": 0}
     else:
         cancel_requested.add(task_id)
         download_tasks[task_id] = {**current, "status": "cancelling"}
     return {"status": "cancel_requested"}
-
 
 @app.post("/download")
 async def start_download(
@@ -366,7 +351,7 @@ def list_downloads():
                 ext = f.split('.')[-1].upper() if '.' in f else 'FILE'
                 files.append({
                     "name": f,
-                    "path": f"/media_files/{f}",
+                    "path": f"/media_files/{quote(f)}",
                     "size_mb": round(stat.st_size / (1024 * 1024), 2),
                     "size_bytes": stat.st_size,
                     "timestamp": stat.st_mtime,
@@ -385,7 +370,7 @@ def list_incoming():
                 ext = f.split('.')[-1].upper() if '.' in f else 'FILE'
                 files.append({
                     "name": f,
-                    "path": f"/incoming_files/{f}",
+                    "path": f"/incoming_files/{quote(f)}",
                     "size_mb": round(stat.st_size / (1024 * 1024), 2),
                     "size_bytes": stat.st_size,
                     "timestamp": stat.st_mtime,
@@ -403,7 +388,6 @@ def delete_incoming_file(filename: str = Query(...)):
 
 @app.post("/incoming/save")
 def save_incoming_file(filename: str = Query(...)):
-    """Moves a file out of the incoming/staging area and into the permanent downloads library."""
     safe_filename = os.path.basename(filename)
     src_path = os.path.join(INCOMING_DIR, safe_filename)
     if not (os.path.exists(src_path) and os.path.isfile(src_path)):
@@ -420,7 +404,7 @@ def save_incoming_file(filename: str = Query(...)):
             n += 1
 
     shutil.move(src_path, dest_path)
-    return {"status": "success", "filename": dest_name, "path": f"/media_files/{dest_name}"}
+    return {"status": "success", "filename": dest_name, "path": f"/media_files/{quote(dest_name)}"}
 
 @app.delete("/downloads/delete")
 def delete_single_file(filename: str = Query(...)):
