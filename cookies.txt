@@ -66,3 +66,8 @@ accounts.google.com	FALSE	/	TRUE	1823367006	__Host-GAPS	1:CE6pLbo9lU6FnVTqkoKMgO
 .twitter.com	TRUE	/	TRUE	1823217109	guest_id	v1%3A178865710916664705
 .facebook.com	TRUE	/	TRUE	1823682981	sb	pNmjapo2mbsHrtqi3lsTMMWM
 t.me	FALSE	/	TRUE	1820992985	stel_on	1
+.tiktok.com	TRUE	/	TRUE	1820564714	ttwid	1%7C43qR0s3Ktkmfouognfc29mcXSlQpxofqtvnjskw7xwQ%7C1789460714%7Ce9ed1713402e345c4a498b1528e1b01cc497fb0851da9f6269cb9c802880c8b4
+.tiktok.com	TRUE	/	TRUE	0	tt_csrf_token	4i8fPXop-Td-2cgTVbssJbKRsck07skPTG6w
+.tiktok.com	TRUE	/	TRUE	1805012715	tt_chain_token	UqSImoiT6Q3SemwwPLeA4w==
+www.tiktok.com	FALSE	/	TRUE	1790324714	msToken	YkqhWpeqQgYIkWVuz2ExOM4fEfy06drw_smXdMjo1aHa9NJf-yq8RxG6JtaMeZYSjLMfI1CJRn8sJavm3LbgWVHHCeKBuvs6Om4sh-BzGWkE-YjOWTHzt31D
+www.tiktok.com	FALSE	/@shiru.shiru.shhiru17/video	FALSE	1789461015	_waftokenid	eyJ2Ijp7ImEiOiJtWFg1ZDJnR1NRcTdjaE05U1NHd1V3MUJnTFNvcFpSRGR4Nkp3WmZlNlhnPSIsImIiOjE3ODk0NjA3MTQsImMiOiI3QlN4Z0lGUmRtUkFadkRDMGNOV0pTY2h3OGFlSzBYNlI5eDhkYjRLbVNZPSJ9LCJzIjoibDhJeUlrRU1WRGtLWm1SVDRKM0dLZDVrdUtuZTBlM2ZJMzRwTHpSZC9wQT0ifQ
