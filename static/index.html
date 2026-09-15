@@ -485,6 +485,19 @@
         .replace(/'/g, "\\'")
         .replace(/"/g, '&quot;');
     }
+
+    // A simple, deterministic string hash. Used to give the Home feed a
+    // shuffled-looking order that stays stable across re-renders — real
+    // Math.random() would reshuffle (and visually jump around) every time
+    // the list refreshes, which happens often (new downloads, saves, etc).
+    function hashCode(str) {
+      let hash = 0;
+      for (let i = 0; i < str.length; i++) {
+        hash = (hash << 5) - hash + str.charCodeAt(i);
+        hash |= 0;
+      }
+      return hash;
+    }
     let reelObserver = null;
     const playerOverlay = document.getElementById('playerOverlay');
     const videoEl = document.getElementById('vaultVideoElement');
@@ -762,8 +775,13 @@
       if (!confirm(`Delete "${filename}"?`)) return;
       try {
         const res = await fetch(`/downloads/delete?filename=${encodeURIComponent(filename)}`, { method: 'DELETE' });
-        if (res.ok) { loadDownloadedMedia(); loadStorageStats(); }
-      } catch (e) { alert("Error deleting file."); }
+        if (!res.ok) throw new Error('Delete failed');
+      } catch (e) {
+        alert("Error deleting file.");
+      } finally {
+        loadDownloadedMedia();
+        loadStorageStats();
+      }
     }
 
     async function renameSingleFile(oldName) {
@@ -940,6 +958,7 @@
     function renderHomeFeed() {
       const hGrid = document.getElementById('tab-home');
       const videoFiles = (homeFiles || []).filter(f => f.ext !== 'MP3');
+      videoFiles.sort((a, b) => hashCode(a.name) - hashCode(b.name));
 
       if (videoFiles.length === 0) {
         hGrid.innerHTML = '<p style="color: var(--text-muted); padding: 20px;">Nothing new yet — download something from VDownloader and it\'ll show up here.</p>';

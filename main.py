@@ -399,8 +399,7 @@ def delete_incoming_file(filename: str = Query(...)):
     file_path = os.path.join(INCOMING_DIR, safe_filename)
     if os.path.exists(file_path) and os.path.isfile(file_path):
         os.remove(file_path)
-        return {"status": "success"}
-    raise HTTPException(status_code=404, detail="File not found")
+    return {"status": "success"}
 
 @app.post("/incoming/save")
 def save_incoming_file(filename: str = Query(...)):
@@ -429,8 +428,7 @@ def delete_single_file(filename: str = Query(...)):
     file_path = os.path.join(DOWNLOADS_DIR, safe_filename)
     if os.path.exists(file_path) and os.path.isfile(file_path):
         os.remove(file_path)
-        return {"status": "success"}
-    raise HTTPException(status_code=404, detail="File not found")
+    return {"status": "success"}
 
 @app.post("/downloads/rename")
 def rename_file(req: RenameRequest):
