@@ -69,7 +69,7 @@
 
     .reel-overlay {
       position: absolute;
-      bottom: 20px;
+      bottom: 68px;
       left: 16px;
       right: 70px;
       color: #fff;
@@ -138,7 +138,7 @@
     .reel-actions {
       position: absolute;
       right: 12px;
-      bottom: 30px;
+      bottom: 78px;
       display: flex;
       flex-direction: column;
       gap: 20px;
@@ -181,48 +181,72 @@
       text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
     }
 
-    .reel-seek {
+    .reel-progress {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 8px;
+      height: 22px;
+      display: flex;
+      align-items: center;
+      padding: 0 10px;
+      z-index: 25;
+      cursor: pointer;
+      touch-action: none;
+    }
+    .reel-progress-track {
+      position: relative;
+      width: 100%;
+      height: 3px;
+      border-radius: 2px;
+      background: rgba(255, 255, 255, 0.35);
+      overflow: hidden;
+    }
+    .reel-progress-fill {
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 0%;
+      background: #fff;
+      border-radius: 2px;
+    }
+
+    /* X-style bottom control bar for the home reel player */
+    .xplayer-controls {
       position: absolute;
       left: 0;
       right: 0;
       bottom: 0;
-      width: 100%;
-      height: 16px;
-      margin: 0;
-      -webkit-appearance: none;
-      appearance: none;
-      background: transparent;
-      cursor: pointer;
-      z-index: 25;
+      z-index: 22;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 14px calc(10px + env(safe-area-inset-bottom, 0px));
+      background: linear-gradient(to top, rgba(0, 0, 0, 0.6), rgba(0, 0, 0, 0));
     }
-    .reel-seek::-webkit-slider-runnable-track {
-      height: 3px;
-      background: linear-gradient(to right, #fff var(--seek-pct, 0%), rgba(255, 255, 255, 0.3) var(--seek-pct, 0%));
-    }
-    .reel-seek::-moz-range-track {
-      height: 3px;
-      background: rgba(255, 255, 255, 0.3);
-    }
-    .reel-seek::-moz-range-progress {
-      height: 3px;
-      background: #fff;
-    }
-    .reel-seek::-webkit-slider-thumb {
-      -webkit-appearance: none;
-      width: 12px;
-      height: 12px;
-      margin-top: -4.5px;
-      border-radius: 50%;
-      background: #fff;
-      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
-    }
-    .reel-seek::-moz-range-thumb {
-      width: 12px;
-      height: 12px;
+    .xplayer-btn {
+      background: none;
       border: none;
-      border-radius: 50%;
-      background: #fff;
-      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 4px;
+      cursor: pointer;
+      filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.6));
+    }
+    .xplayer-btn:active { opacity: 0.7; }
+    .xplayer-time {
+      font-size: 0.8rem;
+      font-weight: 500;
+      color: #fff;
+      text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+    }
+    .xplayer-spacer { flex: 1; }
+    .xplayer-speed {
+      font-size: 0.8rem;
+      font-weight: 700;
     }
 
     .header-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 8px; flex-wrap: wrap; }
@@ -609,10 +633,80 @@
       if (!card) return;
       const overlay = card.querySelector('.reel-error-overlay');
       if (overlay) overlay.classList.add('show');
-      const seek = card.querySelector('.reel-seek');
+      const seek = card.querySelector('.reel-progress');
       if (seek) seek.style.display = 'none';
       const playIcon = card.querySelector('.reel-play-icon');
       if (playIcon) playIcon.style.display = 'none';
+      const controls = card.querySelector('.xplayer-controls');
+      if (controls) controls.style.display = 'none';
+    }
+
+    // Formats seconds remaining as "-M:SS", matching the reference player.
+    function formatRemaining(seconds) {
+      if (!isFinite(seconds) || seconds < 0) seconds = 0;
+      const m = Math.floor(seconds / 60);
+      const s = Math.floor(seconds % 60);
+      return `-${m}:${s.toString().padStart(2, '0')}`;
+    }
+
+    // Keeps a reel card's play/pause icon in sync with the actual video
+    // state, regardless of whether playback was triggered by a tap, the
+    // scroll observer, or autoplay.
+    function syncReelPlayIcon(videoEl) {
+      const card = videoEl.closest('.reel-card');
+      if (!card) return;
+      const playIcon = card.querySelector('.xplayer-icon-play');
+      const pauseIcon = card.querySelector('.xplayer-icon-pause');
+      if (!playIcon || !pauseIcon) return;
+      const playing = !videoEl.paused;
+      playIcon.style.display = playing ? 'none' : '';
+      pauseIcon.style.display = playing ? '' : 'none';
+    }
+
+    function toggleReelMute(btnEl) {
+      const card = btnEl.closest('.reel-card');
+      const video = card ? card.querySelector('video') : null;
+      if (!video) return;
+      video.muted = !video.muted;
+      const onIcon = btnEl.querySelector('.xplayer-icon-vol-on');
+      const offIcon = btnEl.querySelector('.xplayer-icon-vol-off');
+      if (onIcon) onIcon.style.display = video.muted ? 'none' : '';
+      if (offIcon) offIcon.style.display = video.muted ? '' : 'none';
+    }
+
+    const REEL_SPEEDS = [1, 1.5, 2, 0.5];
+    function cycleReelSpeed(btnEl) {
+      const card = btnEl.closest('.reel-card');
+      const video = card ? card.querySelector('video') : null;
+      if (!video) return;
+      const current = REEL_SPEEDS.indexOf(video.playbackRate);
+      const next = REEL_SPEEDS[(current + 1) % REEL_SPEEDS.length];
+      video.playbackRate = next;
+      btnEl.textContent = `${next}x`;
+    }
+
+    function expandReelVideo(btnEl) {
+      const card = btnEl.closest('.reel-card');
+      const video = card ? card.querySelector('video') : null;
+      if (!video) return;
+      if (video.requestFullscreen) video.requestFullscreen().catch(() => {});
+      else if (video.webkitEnterFullscreen) video.webkitEnterFullscreen();
+    }
+
+    async function rotateReelVideo(btnEl) {
+      const card = btnEl.closest('.reel-card');
+      const video = card ? card.querySelector('video') : null;
+      if (!video) return;
+      try {
+        if (video.requestFullscreen) await video.requestFullscreen();
+        else if (video.webkitEnterFullscreen) video.webkitEnterFullscreen();
+        if (screen.orientation && screen.orientation.lock) {
+          await screen.orientation.lock('landscape');
+        }
+      } catch (e) {
+        // Orientation lock isn't supported on every browser — fullscreen
+        // (already applied above) is still a reasonable fallback.
+      }
     }
 
     async function removeIncomingFile(fileName, btnEl) {
@@ -626,19 +720,50 @@
     function updateReelSeek(videoEl) {
       if (!videoEl.duration || isNaN(videoEl.duration)) return;
       const card = videoEl.closest('.reel-card');
-      const seek = card ? card.querySelector('.reel-seek') : null;
-      if (!seek || seek.matches(':active')) return;
-      const pct = (videoEl.currentTime / videoEl.duration) * 100;
-      seek.value = pct;
-      seek.style.setProperty('--seek-pct', pct + '%');
+      if (!card) return;
+      if (!card.dataset.seeking) {
+        const pct = Math.min(100, Math.max(0, (videoEl.currentTime / videoEl.duration) * 100));
+        const fill = card.querySelector('.reel-progress-fill');
+        if (fill) fill.style.width = pct + '%';
+      }
+      const timeEl = card.querySelector('.xplayer-time');
+      if (timeEl) timeEl.textContent = formatRemaining(videoEl.duration - videoEl.currentTime);
     }
 
-    function seekReel(rangeEl) {
-      const card = rangeEl.closest('.reel-card');
-      const video = card ? card.querySelector('video') : null;
-      if (!video || !video.duration || isNaN(video.duration)) return;
-      video.currentTime = (rangeEl.value / 100) * video.duration;
-      rangeEl.style.setProperty('--seek-pct', rangeEl.value + '%');
+    // Moves playback + the fill bar to whatever point on the track sits
+    // under clientX. Shared by the initial tap and any drag that follows.
+    function reelSeekToClientX(card, clientX) {
+      const track = card.querySelector('.reel-progress-track');
+      const video = card.querySelector('video');
+      if (!track || !video || !video.duration || isNaN(video.duration)) return;
+      const rect = track.getBoundingClientRect();
+      let pct = rect.width ? (clientX - rect.left) / rect.width : 0;
+      pct = Math.min(1, Math.max(0, pct));
+      video.currentTime = pct * video.duration;
+      const fill = card.querySelector('.reel-progress-fill');
+      if (fill) fill.style.width = (pct * 100) + '%';
+    }
+
+    // Custom drag-to-seek — avoids native <input type="range"> styling,
+    // which some Android WebViews render with their own default look
+    // instead of respecting the thin custom track/thumb CSS.
+    function startReelSeekDrag(evt, progressEl) {
+      evt.stopPropagation();
+      const card = progressEl.closest('.reel-card');
+      if (!card) return;
+      card.dataset.seeking = '1';
+      reelSeekToClientX(card, evt.clientX);
+
+      const move = (e) => reelSeekToClientX(card, e.clientX);
+      const end = () => {
+        delete card.dataset.seeking;
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', end);
+        window.removeEventListener('pointercancel', end);
+      };
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', end);
+      window.addEventListener('pointercancel', end);
     }
 
     async function saveToPhone(filePath, fileName, btnEl) {
@@ -1066,7 +1191,9 @@
         <div class="reel-card" data-seq="${seq}" data-file-idx="${idx}" onclick="toggleReelPlay(this)">
           <video class="reel-video" src="${file.path}" loop playsinline
                  ontimeupdate="updateReelSeek(this)"
-                 onerror="handleReelVideoError(this)"></video>
+                 onerror="handleReelVideoError(this)"
+                 onplay="syncReelPlayIcon(this)"
+                 onpause="syncReelPlayIcon(this)"></video>
           <div class="reel-play-icon">▶</div>
 
           <div class="reel-error-overlay">
@@ -1088,9 +1215,31 @@
             <div class="reel-meta">${file.size_mb} MB • ${file.ext}</div>
           </div>
 
-          <input type="range" class="reel-seek" min="0" max="100" value="0" step="0.1"
-                 onclick="event.stopPropagation()"
-                 oninput="seekReel(this)">
+          <div class="reel-progress" onclick="event.stopPropagation()" onpointerdown="startReelSeekDrag(event, this)">
+            <div class="reel-progress-track">
+              <div class="reel-progress-fill"></div>
+            </div>
+          </div>
+
+          <div class="xplayer-controls" onclick="event.stopPropagation()">
+            <button class="xplayer-btn xplayer-playpause" onclick="toggleReelPlay(this.closest('.reel-card'))">
+              <svg class="xplayer-icon-play" width="22" height="22" viewBox="0 0 24 24"><path fill="currentColor" d="M8 5v14l11-7z"></path></svg>
+              <svg class="xplayer-icon-pause" width="22" height="22" viewBox="0 0 24 24" style="display:none;"><rect x="6" y="5" width="4" height="14" fill="currentColor"></rect><rect x="14" y="5" width="4" height="14" fill="currentColor"></rect></svg>
+            </button>
+            <span class="xplayer-time">-0:00</span>
+            <div class="xplayer-spacer"></div>
+            <button class="xplayer-btn xplayer-speed" onclick="cycleReelSpeed(this)">1x</button>
+            <button class="xplayer-btn xplayer-mute" onclick="toggleReelMute(this)">
+              <svg class="xplayer-icon-vol-on" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path><path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path></svg>
+              <svg class="xplayer-icon-vol-off" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none;"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><line x1="23" y1="9" x2="17" y2="15"></line><line x1="17" y1="9" x2="23" y2="15"></line></svg>
+            </button>
+            <button class="xplayer-btn xplayer-expand" onclick="expandReelVideo(this)">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"></path><path d="M21 8V5a2 2 0 0 0-2-2h-3"></path><path d="M3 16v3a2 2 0 0 0 2 2h3"></path><path d="M16 21h3a2 2 0 0 0 2-2v-3"></path></svg>
+            </button>
+            <button class="xplayer-btn xplayer-rotate" onclick="rotateReelVideo(this)">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
+            </button>
+          </div>
         </div>
       `;
     }
