@@ -489,6 +489,13 @@
     let currentDownloadsList = [];
     let currentHomeList = [];
 
+    // --- Infinite reel loop state ---
+    const REEL_BUFFER_TRIGGER = 3;   // start the next lap this many cards before the end
+    const REEL_MAX_RENDERED = 60;    // trim old off-screen cards once the feed grows past this
+    let reelSeqCounter = 0;          // ever-increasing id, one per card ever created
+    let reelTailSeq = -1;            // seq of the last card currently in the DOM
+    let reelAppendedForTail = -1;    // last reelTailSeq we already queued a new lap for
+
     function escapeHtml(str) {
       return String(str)
         .replace(/&/g, '&amp;')
@@ -566,18 +573,22 @@
       reelObserver = new IntersectionObserver((entries) => {
         entries.forEach(entry => {
           const video = entry.target.querySelector('video');
-          if (video) {
-            if (entry.isIntersecting) {
-              video.play().catch(() => {});
-            } else {
-              video.pause();
-              video.currentTime = 0;
-            }
+          if (entry.isIntersecting) {
+            if (video) video.play().catch(() => {});
+            maybeExtendReelFeed(entry.target);
+          } else if (video) {
+            video.pause();
+            video.currentTime = 0;
           }
         });
       }, { threshold: 0.75 });
 
-      document.querySelectorAll('.reel-card').forEach(card => reelObserver.observe(card));
+      document.querySelectorAll('.reel-card').forEach(card => {
+        card.dataset.observed = '1';
+        reelObserver.observe(card);
+      });
+
+      reelTailSeq = reelSeqCounter - 1;
     }
 
     function toggleReelPlay(cardEl) {
@@ -1031,46 +1042,119 @@
 
       currentHomeList = videoFiles;
 
+      // Fresh feed load — reset the infinite-loop bookkeeping
+      reelSeqCounter = 0;
+      reelTailSeq = -1;
+      reelAppendedForTail = -1;
+
       if (videoFiles.length === 0) {
         hGrid.innerHTML = '<p style="color: var(--text-muted); padding: 20px;">Nothing new yet — download something from VDownloader and it\'ll show up here.</p>';
         return;
       }
 
-      hGrid.innerHTML = videoFiles.map((file, idx) => {
-        return `
-          <div class="reel-card" onclick="toggleReelPlay(this)">
-            <video class="reel-video" src="${file.path}" loop playsinline
-                   ontimeupdate="updateReelSeek(this)"
-                   onerror="handleReelVideoError(this)"></video>
-            <div class="reel-play-icon">▶</div>
-
-            <div class="reel-error-overlay">
-              <div class="reel-error-text">This video can't be played — it may be corrupted or incomplete.</div>
-              <button class="reel-error-remove-btn" onclick="event.stopPropagation(); removeHomeFile(${idx}, this)">Remove</button>
-            </div>
-
-            <div class="reel-actions" onclick="event.stopPropagation()">
-              <button class="reel-action-btn" onclick="saveHomeFile(${idx}, this)">
-                <span class="reel-action-icon">
-                  <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-                </span>
-                <span class="reel-action-label">Save</span>
-              </button>
-            </div>
-
-            <div class="reel-overlay">
-              <div class="reel-title">${escapeHtml(file.name)}</div>
-              <div class="reel-meta">${file.size_mb} MB • ${file.ext}</div>
-            </div>
-
-            <input type="range" class="reel-seek" min="0" max="100" value="0" step="0.1"
-                   onclick="event.stopPropagation()"
-                   oninput="seekReel(this)">
-          </div>
-        `;
-      }).join('');
+      hGrid.innerHTML = videoFiles.map((file, idx) => buildReelCardHTML(file, idx)).join('');
 
       initReelObserver();
+    }
+
+    // Builds one reel card. `idx` is always the position of `file` inside
+    // currentHomeList — repeated laps reuse the same idx values so Save/Remove
+    // keep pointing at the right underlying file.
+    function buildReelCardHTML(file, idx) {
+      const seq = reelSeqCounter++;
+      return `
+        <div class="reel-card" data-seq="${seq}" data-file-idx="${idx}" onclick="toggleReelPlay(this)">
+          <video class="reel-video" src="${file.path}" loop playsinline
+                 ontimeupdate="updateReelSeek(this)"
+                 onerror="handleReelVideoError(this)"></video>
+          <div class="reel-play-icon">▶</div>
+
+          <div class="reel-error-overlay">
+            <div class="reel-error-text">This video can't be played — it may be corrupted or incomplete.</div>
+            <button class="reel-error-remove-btn" onclick="event.stopPropagation(); removeHomeFile(${idx}, this)">Remove</button>
+          </div>
+
+          <div class="reel-actions" onclick="event.stopPropagation()">
+            <button class="reel-action-btn" onclick="saveHomeFile(${idx}, this)">
+              <span class="reel-action-icon">
+                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+              </span>
+              <span class="reel-action-label">Save</span>
+            </button>
+          </div>
+
+          <div class="reel-overlay">
+            <div class="reel-title">${escapeHtml(file.name)}</div>
+            <div class="reel-meta">${file.size_mb} MB • ${file.ext}</div>
+          </div>
+
+          <input type="range" class="reel-seek" min="0" max="100" value="0" step="0.1"
+                 onclick="event.stopPropagation()"
+                 oninput="seekReel(this)">
+        </div>
+      `;
+    }
+
+    // Called when a card near the end of the currently-rendered feed becomes
+    // visible. Queues one more shuffled "lap" through currentHomeList so the
+    // feed never visibly runs out, without re-appending on every scroll tick.
+    function maybeExtendReelFeed(cardEl) {
+      const seq = parseInt(cardEl.dataset.seq, 10);
+      if (isNaN(seq)) return;
+      if (reelTailSeq - seq <= REEL_BUFFER_TRIGGER && reelAppendedForTail !== reelTailSeq) {
+        reelAppendedForTail = reelTailSeq;
+        appendReelBatch();
+      }
+    }
+
+    function appendReelBatch() {
+      const hGrid = document.getElementById('tab-home');
+      const n = currentHomeList.length;
+      if (n === 0) return;
+
+      // A fresh shuffled pass through the same underlying videos.
+      let order = Array.from({ length: n }, (_, i) => i);
+      for (let i = n - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [order[i], order[j]] = [order[j], order[i]];
+      }
+
+      // Don't let the same video play twice in a row at the seam.
+      const lastCard = hGrid.lastElementChild;
+      const lastIdx = lastCard ? parseInt(lastCard.dataset.fileIdx, 10) : null;
+      if (n > 1 && lastIdx !== null && order[0] === lastIdx) {
+        [order[0], order[1]] = [order[1], order[0]];
+      }
+
+      const html = order.map(idx => buildReelCardHTML(currentHomeList[idx], idx)).join('');
+      hGrid.insertAdjacentHTML('beforeend', html);
+
+      hGrid.querySelectorAll('.reel-card:not([data-observed])').forEach(card => {
+        card.dataset.observed = '1';
+        reelObserver.observe(card);
+      });
+
+      reelTailSeq = reelSeqCounter - 1;
+      pruneReelFeed(hGrid);
+    }
+
+    // Keeps the DOM from growing forever on a long scrolling session by
+    // dropping cards well behind the current scroll position.
+    function pruneReelFeed(hGrid) {
+      const cards = hGrid.querySelectorAll('.reel-card');
+      if (cards.length <= REEL_MAX_RENDERED) return;
+
+      const cardHeight = hGrid.clientHeight || 1;
+      const approxCurrentIndex = Math.round(hGrid.scrollTop / cardHeight);
+      const keepBehind = 5; // leave room to scroll back up
+      const removeCount = Math.min(approxCurrentIndex - keepBehind, cards.length - REEL_MAX_RENDERED);
+      if (removeCount <= 0) return;
+
+      for (let i = 0; i < removeCount; i++) {
+        reelObserver.unobserve(cards[i]);
+        cards[i].remove();
+      }
+      hGrid.scrollTop -= removeCount * cardHeight;
     }
 
     function removeHomeFile(index, btnEl) {
