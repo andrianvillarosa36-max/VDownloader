@@ -337,6 +337,16 @@
 
       <div id="downloadQueueList"></div>
     </div>
+
+    <div class="downloader-card">
+      <div class="form-group" style="margin-bottom: 12px;">
+        <label style="margin-bottom: 0;">Upload from Device</label>
+      </div>
+      <input type="file" id="uploadFileInput" accept="video/*" multiple style="display:none;" onchange="handleFileUpload(this.files)" />
+      <button class="btn-secondary" style="width:100%;" onclick="document.getElementById('uploadFileInput').click()">📤 Choose Video File</button>
+
+      <div id="uploadQueueList"></div>
+    </div>
   </section>
 
   <!-- DOWNLOADS TAB -->
@@ -918,6 +928,78 @@
       try {
         await fetch(`/download/cancel/${taskId}`, { method: 'POST' });
       } catch (err) {}
+    }
+
+    async function handleFileUpload(fileList) {
+      const files = Array.from(fileList || []);
+      const input = document.getElementById('uploadFileInput');
+      for (const file of files) {
+        await uploadSingleFile(file);
+      }
+      if (input) input.value = '';
+    }
+
+    function uploadSingleFile(file) {
+      return new Promise((resolve) => {
+        const taskId = 'upload_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+        const queueList = document.getElementById('uploadQueueList');
+
+        queueList.insertAdjacentHTML('beforeend', `
+          <div class="progress-container" style="display:block;" data-task-id="${taskId}">
+            <div class="progress-stats">
+              <span class="row-label" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:70%;">${escapeHtml(file.name)}</span>
+              <span class="row-percent">0%</span>
+            </div>
+            <div class="progress-bar-bg">
+              <div class="row-bar-fill progress-bar-fill"></div>
+            </div>
+            <div class="progress-stats">
+              <span class="row-status">Uploading...</span>
+              <span class="row-eta">${(file.size / (1024 * 1024)).toFixed(1)} MB</span>
+            </div>
+          </div>
+        `);
+
+        const row = queueList.querySelector(`[data-task-id="${taskId}"]`);
+        const barFill = row.querySelector('.row-bar-fill');
+        const percentEl = row.querySelector('.row-percent');
+        const statusEl = row.querySelector('.row-status');
+
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', '/upload', true);
+
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) {
+            const pct = Math.round((e.loaded / e.total) * 100);
+            barFill.style.width = `${pct}%`;
+            percentEl.textContent = `${pct}%`;
+          }
+        };
+
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            barFill.style.width = '100%';
+            percentEl.textContent = '100%';
+            statusEl.textContent = 'Added to Downloads!';
+            loadDownloadedMedia();
+          } else {
+            statusEl.textContent = 'Upload failed';
+          }
+          setTimeout(() => row.remove(), 2500);
+          resolve();
+        };
+
+        xhr.onerror = () => {
+          statusEl.textContent = 'Network error';
+          setTimeout(() => row.remove(), 2500);
+          resolve();
+        };
+
+        xhr.send(formData);
+      });
     }
 
     async function loadDownloadedMedia() {

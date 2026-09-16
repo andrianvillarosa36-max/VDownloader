@@ -7,7 +7,7 @@ import re
 import time
 import subprocess
 from urllib.parse import quote
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, UploadFile, File
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.concurrency import run_in_threadpool
@@ -404,6 +404,31 @@ def save_incoming_file(filename: str = Query(...)):
             n += 1
 
     shutil.move(src_path, dest_path)
+    return {"status": "success", "filename": dest_name, "path": f"/media_files/{quote(dest_name)}"}
+
+@app.post("/upload")
+async def upload_file(file: UploadFile = File(...)):
+    safe_filename = os.path.basename(file.filename or "")
+    if not safe_filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    dest_name = safe_filename
+    dest_path = os.path.join(DOWNLOADS_DIR, dest_name)
+    if os.path.exists(dest_path):
+        base, ext = os.path.splitext(safe_filename)
+        n = 1
+        while os.path.exists(dest_path):
+            dest_name = f"{base}_{n}{ext}"
+            dest_path = os.path.join(DOWNLOADS_DIR, dest_name)
+            n += 1
+
+    with open(dest_path, "wb") as out_file:
+        while True:
+            chunk = await file.read(1024 * 1024)
+            if not chunk:
+                break
+            out_file.write(chunk)
+
     return {"status": "success", "filename": dest_name, "path": f"/media_files/{quote(dest_name)}"}
 
 @app.delete("/downloads/delete")
