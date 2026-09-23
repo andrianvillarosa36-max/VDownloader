@@ -43,14 +43,14 @@ async def download_worker():
 
         if task_id in cancel_requested:
             cancel_requested.discard(task_id)
-            download_tasks[task_id] = {"status": "cancelled", "percent": 0, "eta_seconds": 0}
+            download_tasks[task_id] = {"status": "cancelled", "percent": 0, "eta_seconds": 0, "url": url}
             download_queue.task_done()
             continue
 
         try:
             await run_in_threadpool(execute_download, url, format_type, quality, task_id)
         except Exception as e:
-            download_tasks[task_id] = {"status": "error", "error": f"Unexpected error: {str(e)}"}
+            download_tasks[task_id] = {"status": "error", "error": f"Unexpected error: {str(e)}", "url": url}
         finally:
             download_queue.task_done()
 
@@ -100,35 +100,51 @@ def progress_hook(d, task_id):
         pct = round((downloaded / total) * 100, 1)
         eta = d.get('eta', 0)
 
-        download_tasks[task_id] = {
+        download_tasks[task_id].update({
             "status": "downloading",
             "percent": pct,
             "downloaded_mb": round(downloaded / (1024 * 1024), 2),
             "total_mb": round(total / (1024 * 1024), 2),
             "eta_seconds": eta or 0
-        }
+        })
     elif d['status'] == 'finished':
-        download_tasks[task_id] = {
+        download_tasks[task_id].update({
             "status": "finished",
             "percent": 100,
             "downloaded_mb": round(d.get('total_bytes', 0) / (1024 * 1024), 2),
             "total_mb": round(d.get('total_bytes', 0) / (1024 * 1024), 2),
             "eta_seconds": 0
-        }
+        })
 
 def resolve_hidden_media_stream(url: str):
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         "Referer": url
     }
     try:
-        res = requests.get(url, headers=headers, timeout=10)
+        res = requests.get(url, headers=headers, timeout=12, allow_redirects=True)
         html = res.text
         
+        # Check OpenGraph video meta tags (common for Instagram, Facebook, and generic news sites)
+        og_videos = re.findall(r'<meta[^>]+property=["\']og:video(?::secure_url)?["\'][^>]+content=["\']([^"\']+)["\']', html, re.IGNORECASE)
+        if og_videos:
+            return og_videos[0].replace("&amp;", "&")
+
+        # Check HTML5 video source tags
+        sources = re.findall(r'<source[^>]+src=["\']([^"\']+)["\']', html, re.IGNORECASE)
+        if sources:
+            src = sources[0]
+            if src.startswith('//'):
+                src = 'https:' + src
+            return src
+        
+        # Check direct m3u8 or mp4 stream links
         direct_streams = re.findall(r'https?://[^\s\'"<>]+?\.(?:m3u8|mp4)[^\s\'"<>]*', html)
         if direct_streams:
             return direct_streams[0]
             
+        # Check embedded iframe sources
         iframes = re.findall(r'<iframe[^>]+src=["\']([^"\']+)["\']', html, re.IGNORECASE)
         for iframe_url in iframes:
             if iframe_url.startswith('//'):
@@ -136,6 +152,9 @@ def resolve_hidden_media_stream(url: str):
             if iframe_url.startswith('http'):
                 try:
                     sub_res = requests.get(iframe_url, headers=headers, timeout=8)
+                    sub_og = re.findall(r'<meta[^>]+property=["\']og:video(?::secure_url)?["\'][^>]+content=["\']([^"\']+)["\']', sub_res.text, re.IGNORECASE)
+                    if sub_og:
+                        return sub_og[0].replace("&amp;", "&")
                     sub_streams = re.findall(r'https?://[^\s\'"<>]+?\.(?:m3u8|mp4)[^\s\'"<>]*', sub_res.text)
                     if sub_streams:
                         return sub_streams[0]
@@ -147,7 +166,7 @@ def resolve_hidden_media_stream(url: str):
 
 def download_twitter_vx(url: str, task_id: str, format_type: str):
     try:
-        download_tasks[task_id] = {"status": "downloading", "percent": 0, "eta_seconds": 0}
+        download_tasks[task_id].update({"status": "downloading", "percent": 0, "eta_seconds": 0})
         
         api_url = re.sub(r'https?://(www\.)?(twitter\.com|x\.com)', 'https://api.vxtwitter.com', url)
         api_url = api_url.split('?')[0]
@@ -201,7 +220,7 @@ def download_twitter_vx(url: str, task_id: str, format_type: str):
                         })
         
         if format_type == 'mp3':
-            download_tasks[task_id] = {"status": "processing", "percent": 99, "eta_seconds": 0}
+            download_tasks[task_id].update({"status": "processing", "percent": 99, "eta_seconds": 0})
             mp3_filepath = filepath.rsplit('.', 1)[0] + '.mp3'
             subprocess.run([
                 "ffmpeg", "-y", "-i", filepath, 
@@ -229,7 +248,7 @@ def cleanup_partial_files(start_ts):
                 pass
 
 def execute_download(target_url: str, format_type: str, quality: str, task_id: str):
-    download_tasks[task_id] = {"status": "starting", "percent": 0}
+    download_tasks[task_id].update({"status": "starting", "percent": 0})
     start_ts = time.time()
 
     try:
@@ -237,12 +256,12 @@ def execute_download(target_url: str, format_type: str, quality: str, task_id: s
             try:
                 success, err = download_twitter_vx(target_url, task_id, format_type)
             except CancelledDownload:
-                download_tasks[task_id] = {"status": "cancelled", "percent": 0, "eta_seconds": 0}
+                download_tasks[task_id].update({"status": "cancelled", "percent": 0, "eta_seconds": 0})
                 return
             if success:
-                download_tasks[task_id] = {"status": "finished", "percent": 100, "eta_seconds": 0}
+                download_tasks[task_id].update({"status": "finished", "percent": 100, "eta_seconds": 0})
                 return
-            download_tasks[task_id] = {"status": "downloading", "percent": 0, "eta_seconds": 0}
+            download_tasks[task_id].update({"status": "downloading", "percent": 0, "eta_seconds": 0})
 
         ydl_opts = {
             'outtmpl': os.path.join(INCOMING_DIR, '%(title)s.%(ext)s'),
@@ -250,6 +269,11 @@ def execute_download(target_url: str, format_type: str, quality: str, task_id: s
             'quiet': True,
             'no_warnings': True,
             'restrictfilenames': True,
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9',
+            }
         }
         if os.path.exists(COOKIES_FILE):
             ydl_opts['cookiefile'] = COOKIES_FILE
@@ -276,27 +300,35 @@ def execute_download(target_url: str, format_type: str, quality: str, task_id: s
                 ydl.download([target_url])
             download_tasks[task_id]['status'] = 'finished'
         except CancelledDownload:
-            download_tasks[task_id] = {"status": "cancelled", "percent": 0, "eta_seconds": 0}
+            download_tasks[task_id].update({"status": "cancelled", "percent": 0, "eta_seconds": 0})
             cleanup_partial_files(start_ts)
         except Exception:
             resolved_stream = resolve_hidden_media_stream(target_url)
             if resolved_stream:
                 try:
-                    ydl_opts['http_headers'] = {'Referer': target_url}
+                    ydl_opts['http_headers']['Referer'] = target_url
                     ydl_opts['outtmpl'] = os.path.join(INCOMING_DIR, f'web_stream_{task_id[:8]}.%(ext)s')
 
                     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                         ydl.download([resolved_stream])
                     download_tasks[task_id]['status'] = 'finished'
                 except CancelledDownload:
-                    download_tasks[task_id] = {"status": "cancelled", "percent": 0, "eta_seconds": 0}
+                    download_tasks[task_id].update({"status": "cancelled", "percent": 0, "eta_seconds": 0})
                     cleanup_partial_files(start_ts)
                 except Exception as stream_error:
-                    download_tasks[task_id] = {"status": "error", "error": f"Stream extracted but failed: {str(stream_error)}"}
+                    download_tasks[task_id].update({"status": "error", "error": f"Stream extracted but failed: {str(stream_error)}"})
             else:
-                download_tasks[task_id] = {"status": "error", "error": "Unsupported website and no video stream found."}
+                download_tasks[task_id].update({"status": "error", "error": "Unsupported website and no video stream found."})
     finally:
         cancel_requested.discard(task_id)
+
+@app.get("/download/active")
+def get_active_downloads():
+    active = {}
+    for task_id, task in download_tasks.items():
+        if task.get("status") in ["queued", "starting", "downloading", "processing", "cancelling"]:
+            active[task_id] = task
+    return active
 
 @app.post("/download/cancel/{task_id}")
 def cancel_download(task_id: str):
@@ -307,10 +339,10 @@ def cancel_download(task_id: str):
         if task_id in queue_order:
             queue_order.remove(task_id)
         cancel_requested.add(task_id)
-        download_tasks[task_id] = {"status": "cancelled", "percent": 0, "eta_seconds": 0}
+        download_tasks[task_id].update({"status": "cancelled", "percent": 0, "eta_seconds": 0})
     else:
         cancel_requested.add(task_id)
-        download_tasks[task_id] = {**current, "status": "cancelling"}
+        download_tasks[task_id].update({"status": "cancelling"})
     return {"status": "cancel_requested"}
 
 @app.post("/download")
@@ -322,7 +354,7 @@ async def start_download(
 ):
     queue_order.append(task_id)
     position = len(queue_order)
-    download_tasks[task_id] = {"status": "queued", "percent": 0, "queue_position": position}
+    download_tasks[task_id] = {"status": "queued", "percent": 0, "queue_position": position, "url": url}
     await download_queue.put((url, format_type, quality, task_id))
     return {"status": "queued", "task_id": task_id, "queue_position": position}
 
@@ -463,6 +495,83 @@ def clear_downloads():
                 os.remove(fp)
     return {"status": "success"}
 
+@app.post("/incoming/save")
+def save_incoming_file(filename: str = Query(...)):
+    safe_filename = os.path.basename(filename)
+    src_path = os.path.join(INCOMING_DIR, safe_filename)
+    if not (os.path.exists(src_path) and os.path.isfile(src_path)):
+        raise HTTPException(status_code=404, detail="File not found")
+
+    dest_name = safe_filename
+    dest_path = os.path.join(DOWNLOADS_DIR, dest_name)
+    if os.path.exists(dest_path):
+        base, ext = os.path.splitext(safe_filename)
+        n = 1
+        while os.path.exists(dest_path):
+            dest_name = f"{base}_{n}{ext}"
+            dest_path = os.path.join(DOWNLOADS_DIR, dest_name)
+            n += 1
+
+    shutil.move(src_path, dest_path)
+    return {"status": "success", "filename": dest_name, "path": f"/media_files/{quote(dest_name)}"}
+
+@app.post("/upload")
+async def upload_file(file: UploadFile = File(...)):
+    safe_filename = os.path.basename(file.filename or "")
+    if not safe_filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    dest_name = safe_filename
+    dest_path = os.path.join(DOWNLOADS_DIR, dest_name)
+    if os.path.exists(dest_path):
+        base, ext = os.path.splitext(safe_filename)
+        n = 1
+        while os.path.exists(dest_path):
+            dest_name = f"{base}_{n}{ext}"
+            dest_path = os.path.join(DOWNLOADS_DIR, dest_name)
+            n += 1
+
+    with open(dest_path, "wb") as out_file:
+        while True:
+            chunk = await file.read(1024 * 1024)
+            if not chunk:
+                break
+            out_file.write(chunk)
+
+    return {"status": "success", "filename": dest_name, "path": f"/media_files/{quote(dest_name)}"}
+
+@app.delete("/downloads/delete")
+def delete_single_file(filename: str = Query(...)):
+    safe_filename = os.path.basename(filename)
+    file_path = os.path.join(DOWNLOADS_DIR, safe_filename)
+    if os.path.exists(file_path) and os.path.isfile(file_path):
+        os.remove(file_path)
+    return {"status": "success"}
+
+@app.post("/downloads/rename")
+def rename_file(req: RenameRequest):
+    safe_old = os.path.basename(req.old_filename)
+    safe_new = os.path.basename(req.new_filename)
+    old_path = os.path.join(DOWNLOADS_DIR, safe_old)
+    new_path = os.path.join(DOWNLOADS_DIR, safe_new)
+
+    if not os.path.exists(old_path):
+        raise HTTPException(status_code=404, detail="File not found")
+    if os.path.exists(new_path):
+        raise HTTPException(status_code=400, detail="A file with that name already exists")
+
+    os.rename(old_path, new_path)
+    return {"status": "success"}
+
+@app.delete("/downloads/clear")
+def clear_downloads():
+    if os.path.exists(DOWNLOADS_DIR):
+        for f in os.listdir(DOWNLOADS_DIR):
+            fp = os.path.join(DOWNLOADS_DIR, f)
+            if os.path.isfile(fp):
+                os.remove(fp)
+    return {"status": "success"}
+
 @app.get("/system/storage")
 def storage_info():
     total_size = 0
@@ -480,4 +589,3 @@ def storage_info():
         "file_count": count,
         "disk_free_gb": round(free / (1024 * 1024 * 1024), 2)
     }
-
