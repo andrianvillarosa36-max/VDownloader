@@ -66,7 +66,7 @@ accounts.google.com	FALSE	/	TRUE	1823367006	__Host-GAPS	1:CE6pLbo9lU6FnVTqkoKMgO
 .twitter.com	TRUE	/	TRUE	1823217109	guest_id	v1%3A178865710916664705
 .facebook.com	TRUE	/	TRUE	1823682981	sb	pNmjapo2mbsHrtqi3lsTMMWM
 t.me	FALSE	/	TRUE	1820992985	stel_on	1
-t.me	FALSE	/	TRUE	1790256490	stel_ssid	3919cbca2cba74af56_4264884058286384620
+t.me	FALSE	/	TRUE	1790330971	stel_ssid	36d43a8661391cb73f_16501920975298273641
 .tiktok.com	TRUE	/	TRUE	1820564714	ttwid	1%7C43qR0s3Ktkmfouognfc29mcXSlQpxofqtvnjskw7xwQ%7C1789460714%7Ce9ed1713402e345c4a498b1528e1b01cc497fb0851da9f6269cb9c802880c8b4
 .tiktok.com	TRUE	/	TRUE	0	tt_csrf_token	4i8fPXop-Td-2cgTVbssJbKRsck07skPTG6w
 .tiktok.com	TRUE	/	TRUE	1805012715	tt_chain_token	UqSImoiT6Q3SemwwPLeA4w==

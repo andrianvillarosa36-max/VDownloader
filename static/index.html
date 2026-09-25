@@ -29,7 +29,7 @@
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-    body { background-color: var(--bg-color); color: var(--text-main); padding-bottom: calc(var(--nav-height) + env(safe-area-inset-bottom, 0px)); min-height: 100dvh; min-height: 100vh; transition: background 0.3s, color 0.3s; }
+    body { background-color: var(--bg-color); color: var(--text-main); padding-bottom: calc(var(--nav-height) + env(safe-area-inset-bottom, 0px)); min-height: 100dvh; min-height: 100vh; transition: background 0.3s, color 0.3s; display: flex; flex-direction: column; }
 
     header { position: sticky; top: 0; background: rgba(15, 15, 18, 0.95); backdrop-filter: blur(10px); padding: 16px; z-index: 100; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; }
     [data-theme="light"] header { background: rgba(244, 245, 248, 0.95); }
@@ -41,8 +41,8 @@
     #tab-home.active {
       display: block;
       padding: 0;
-      height: calc(100dvh - var(--nav-height));
-      height: calc(100vh - var(--nav-height));
+      flex: 1;
+      min-height: 0;
       overflow-y: scroll;
       scroll-snap-type: y mandatory;
       background: #000;
@@ -51,8 +51,7 @@
 
     .reel-card {
       width: 100%;
-      height: calc(100dvh - var(--nav-height));
-      height: calc(100vh - var(--nav-height));
+      height: 100%;
       scroll-snap-align: start;
       scroll-snap-stop: always;
       position: relative;
@@ -554,11 +553,19 @@
       restoreActiveDownloads();
 
       const urlParams = new URLSearchParams(window.location.search);
-      const sharedUrl = urlParams.get('url') || urlParams.get('text');
-      if (sharedUrl) {
+      const sharedRaw = urlParams.get('url') || urlParams.get('text') || urlParams.get('title');
+      if (sharedRaw) {
+        const urlMatch = sharedRaw.match(/https?:\/\/\S+/);
+        const sharedUrl = urlMatch ? urlMatch[0] : sharedRaw;
         const downloaderBtn = document.querySelectorAll('.nav-item')[1];
         switchTab('vdownloader', downloaderBtn);
         document.getElementById('mediaUrl').value = sharedUrl;
+        // Shared straight from Chrome/Telegram's own share sheet — just go,
+        // rather than making them tap Start again.
+        startDownload();
+        // Drop the share params from the address bar so refreshing the page
+        // doesn't silently re-trigger the same download.
+        window.history.replaceState({}, document.title, window.location.pathname);
       }
 
       videoEl.addEventListener('timeupdate', updateVideoProgress);

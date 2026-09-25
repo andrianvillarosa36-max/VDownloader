@@ -13,6 +13,7 @@ from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 import yt_dlp
+from telethon import TelegramClient
 
 app = FastAPI(title="VaultDL")
 
@@ -22,6 +23,18 @@ COOKIES_FILE = "cookies.txt"
 os.makedirs(DOWNLOADS_DIR, exist_ok=True)
 os.makedirs(INCOMING_DIR, exist_ok=True)
 os.makedirs("static", exist_ok=True)
+
+# Telegram support (optional) — pulls media from t.me message links using a
+# real logged-in user session (via login.py, run once) rather than a bot,
+# since bots can't read most channels/groups the way a normal account can.
+# Set these two env vars (from https://my.telegram.org/apps) to enable it;
+# without them, Telegram links just fall through to yt-dlp's own (limited)
+# public-preview scraping instead of erroring out.
+TELEGRAM_SESSION = "vault_session"
+TELEGRAM_API_ID = os.environ.get("TELEGRAM_API_ID")
+TELEGRAM_API_HASH = os.environ.get("TELEGRAM_API_HASH")
+TELEGRAM_ENABLED = bool(TELEGRAM_API_ID and TELEGRAM_API_HASH)
+TELEGRAM_LINK_RE = re.compile(r'(?:https?://)?t(?:elegram)?\.me/(c/)?([^/\s?]+)/(\d+)', re.IGNORECASE)
 
 download_tasks = {}
 cancel_requested = set()
@@ -164,6 +177,50 @@ def resolve_hidden_media_stream(url: str):
         pass
     return None
 
+async def _fetch_telegram_media(url: str, task_id: str):
+    """Uses the logged-in Telethon session (from login.py) to pull the media
+    attachment off a specific t.me message. Returns (success, path_or_error)."""
+    match = TELEGRAM_LINK_RE.search(url)
+    if not match:
+        return False, "Could not find a channel/message in that Telegram link"
+
+    is_private, chat_ref, msg_id = match.group(1), match.group(2), int(match.group(3))
+    entity = int(f"-100{chat_ref}") if is_private else chat_ref
+
+    client = TelegramClient(TELEGRAM_SESSION, int(TELEGRAM_API_ID), TELEGRAM_API_HASH)
+    await client.start()
+    try:
+        message = await client.get_messages(entity, ids=msg_id)
+        if not message or not message.media:
+            return False, "No downloadable media found in that message"
+
+        def progress_callback(current, total):
+            if task_id in cancel_requested:
+                raise CancelledDownload()
+            pct = round((current / total) * 100, 1) if total else 0
+            download_tasks[task_id].update({
+                "status": "downloading",
+                "percent": pct,
+                "downloaded_mb": round(current / (1024 * 1024), 2),
+                "total_mb": round((total or 0) / (1024 * 1024), 2),
+                "eta_seconds": 0,
+            })
+
+        # Passing a directory (not a filename) lets Telethon pick a sensible
+        # name from the message itself, same as it would in the Telegram app.
+        saved_path = await client.download_media(
+            message, file=os.path.join(INCOMING_DIR, ""), progress_callback=progress_callback
+        )
+        if not saved_path:
+            return False, "Telegram returned no file for that message"
+        return True, saved_path
+    except CancelledDownload:
+        raise
+    except Exception as e:
+        return False, str(e)
+    finally:
+        await client.disconnect()
+
 def download_twitter_vx(url: str, task_id: str, format_type: str):
     try:
         download_tasks[task_id].update({"status": "downloading", "percent": 0, "eta_seconds": 0})
@@ -252,6 +309,31 @@ def execute_download(target_url: str, format_type: str, quality: str, task_id: s
     start_ts = time.time()
 
     try:
+        if TELEGRAM_ENABLED and TELEGRAM_LINK_RE.search(target_url):
+            try:
+                success, result = asyncio.run(_fetch_telegram_media(target_url, task_id))
+            except CancelledDownload:
+                download_tasks[task_id].update({"status": "cancelled", "percent": 0, "eta_seconds": 0})
+                cleanup_partial_files(start_ts)
+                return
+            if success:
+                if format_type == 'mp3' and not str(result).lower().endswith('.mp3'):
+                    try:
+                        mp3_path = os.path.splitext(result)[0] + '.mp3'
+                        subprocess.run(
+                            ["ffmpeg", "-y", "-i", result, "-q:a", "0", "-map", "a", mp3_path],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                        )
+                        os.remove(result)
+                    except Exception:
+                        pass  # keep the original file if audio extraction fails
+                download_tasks[task_id].update({"status": "finished", "percent": 100, "eta_seconds": 0})
+                return
+            # Telethon path failed (private chat we're not in, deleted message,
+            # etc.) — fall through and let yt-dlp try the same URL as a
+            # last resort rather than giving up outright.
+            download_tasks[task_id].update({"status": "downloading", "percent": 0, "eta_seconds": 0})
+
         if "twitter.com" in target_url.lower() or "x.com" in target_url.lower():
             try:
                 success, err = download_twitter_vx(target_url, task_id, format_type)
