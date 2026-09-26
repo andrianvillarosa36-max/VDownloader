@@ -29,7 +29,6 @@
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-    html { overscroll-behavior-y: none; }
     body { background-color: var(--bg-color); color: var(--text-main); padding-bottom: calc(var(--nav-height) + env(safe-area-inset-bottom, 0px)); min-height: 100dvh; min-height: 100vh; transition: background 0.3s, color 0.3s; display: flex; flex-direction: column; }
 
     header { position: sticky; top: 0; background: rgba(15, 15, 18, 0.95); backdrop-filter: blur(10px); padding: 16px; z-index: 100; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; }
@@ -39,6 +38,7 @@
     .tab-content { display: none; padding: 16px; }
     .tab-content.active { display: block; }
 
+    /* TikTok / Reels Smooth Snap Container */
     #tab-home.active {
       display: block;
       padding: 0;
@@ -46,16 +46,18 @@
       min-height: 0;
       overflow-y: scroll;
       scroll-snap-type: y mandatory;
+      scroll-behavior: smooth;
       overscroll-behavior-y: contain;
       -webkit-overflow-scrolling: touch;
       background: #000;
       position: relative;
     }
 
+    /* TikTok / Reels Video Card Depth & Scale Animations */
     .reel-card {
       width: 100%;
       height: 100%;
-      scroll-snap-align: start;
+      scroll-snap-align: center;
       scroll-snap-stop: always;
       position: relative;
       display: flex;
@@ -63,6 +65,15 @@
       justify-content: center;
       background: #000;
       overflow: hidden;
+      transform: scale(0.96);
+      opacity: 0.7;
+      transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.35s ease;
+      will-change: transform, opacity;
+    }
+
+    .reel-card.is-active {
+      transform: scale(1);
+      opacity: 1;
     }
 
     .reel-video {
@@ -497,7 +508,7 @@
       <span style="font-size: 1.2rem;">🏠</span>
       <span>Home</span>
     </button>
-       <button class="nav-item" onclick="switchTab('vdownloader', this)">
+    <button class="nav-item" onclick="switchTab('vdownloader', this)">
       <span style="font-size: 1.2rem;">⚡</span>
       <span>VDownloader</span>
     </button>
@@ -518,11 +529,11 @@
     let currentHomeList = [];
 
     // --- Infinite reel loop state ---
-    const REEL_BUFFER_TRIGGER = 3;   // start the next lap this many cards before the end
-    const REEL_MAX_RENDERED = 60;    // trim old off-screen cards once the feed grows past this
-    let reelSeqCounter = 0;          // ever-increasing id, one per card ever created
-    let reelTailSeq = -1;            // seq of the last card currently in the DOM
-    let reelAppendedForTail = -1;    // last reelTailSeq we already queued a new lap for
+    const REEL_BUFFER_TRIGGER = 3;   
+    const REEL_MAX_RENDERED = 60;    
+    let reelSeqCounter = 0;          
+    let reelTailSeq = -1;            
+    let reelAppendedForTail = -1;    
 
     function escapeHtml(str) {
       return String(str)
@@ -563,11 +574,7 @@
         const downloaderBtn = document.querySelectorAll('.nav-item')[1];
         switchTab('vdownloader', downloaderBtn);
         document.getElementById('mediaUrl').value = sharedUrl;
-        // Shared straight from Chrome/Telegram's own share sheet — just go,
-        // rather than making them tap Start again.
         startDownload();
-        // Drop the share params from the address bar so refreshing the page
-        // doesn't silently re-trigger the same download.
         window.history.replaceState({}, document.title, window.location.pathname);
       }
 
@@ -604,6 +611,7 @@
       return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
     }
 
+    /* TikTok / Reels Intersection Observer Sync */
     function initReelObserver() {
       if (reelObserver) reelObserver.disconnect();
 
@@ -611,14 +619,18 @@
         entries.forEach(entry => {
           const video = entry.target.querySelector('video');
           if (entry.isIntersecting) {
+            entry.target.classList.add('is-active');
             if (video) video.play().catch(() => {});
             maybeExtendReelFeed(entry.target);
-          } else if (video) {
-            video.pause();
-            video.currentTime = 0;
+          } else {
+            entry.target.classList.remove('is-active');
+            if (video) {
+              video.pause();
+              video.currentTime = 0;
+            }
           }
         });
-      }, { threshold: 0.75 });
+      }, { threshold: 0.65 });
 
       document.querySelectorAll('.reel-card').forEach(card => {
         card.dataset.observed = '1';
@@ -722,7 +734,7 @@
       } catch (e) {}
       loadDownloadedMedia();
     }
-    
+
     function updateReelSeek(videoEl) {
       if (!videoEl.duration || isNaN(videoEl.duration)) return;
       const card = videoEl.closest('.reel-card');
@@ -1201,10 +1213,8 @@
     function renderHomeFeed() {
       const hGrid = document.getElementById('tab-home');
       
-      // Combine both incoming and saved downloads for the home feed
       const allMedia = [...(homeFiles || []), ...(cachedFiles || [])];
       
-      // Deduplicate files by name
       const uniqueMap = new Map();
       allMedia.forEach(f => {
         if (f.ext !== 'MP3' && !uniqueMap.has(f.name)) {
@@ -1214,7 +1224,6 @@
       
       const videoFiles = Array.from(uniqueMap.values());
 
-      // Randomize videos on home load using Fisher-Yates shuffle
       for (let i = videoFiles.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [videoFiles[i], videoFiles[j]] = [videoFiles[j], videoFiles[i]];
@@ -1222,7 +1231,6 @@
 
       currentHomeList = videoFiles;
 
-      // Fresh feed load — reset the infinite-loop bookkeeping
       reelSeqCounter = 0;
       reelTailSeq = -1;
       reelAppendedForTail = -1;
