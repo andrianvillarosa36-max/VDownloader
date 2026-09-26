@@ -1,9 +1,13 @@
 const CACHE_NAME = 'vaultdl-v2';
-const APP_SHELL = ['/', '/static/index.html', '/static/manifest.json'];
+const SHELL_ASSETS = [
+  '/',
+  '/static/index.html',
+  '/static/manifest.json'
+];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL))
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(SHELL_ASSETS))
   );
   self.skipWaiting();
 });
@@ -20,26 +24,33 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
-  const path = new URL(event.request.url).pathname;
+  const url = event.request.url;
 
-  // Only the app shell itself goes through the service worker. Everything
-  // else — API calls, /incoming_files, /media_files — is left completely
-  // untouched so it always hits the server directly (video content has no
-  // business being duplicated into the cache, and doing so previously also
-  // meant code updates never reached the browser).
-  if (!APP_SHELL.includes(path)) return;
+  if (url.includes('/download') || url.includes('/system')) {
+    return; // always live — never cache these
+  }
 
-  // Network-first: always try to get the freshest copy so future updates
-  // apply immediately. Only fall back to the cached copy if there's no
-  // network at all (e.g. truly offline).
+  const isShellAsset = SHELL_ASSETS.some((path) => url.endsWith(path));
+
+  if (isShellAsset) {
+    // Network-first for the app shell itself: a fresh deploy shows up on
+    // the very next load instead of being stuck behind a stale cache
+    // until CACHE_NAME happens to change. Falls back to cache if offline.
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+          return response;
+        })
+        .catch(() => caches.match(event.request))
+    );
+    return;
+  }
+
+  // Cache-first for everything else (media files, icons) — these don't
+  // change once created, so serving from cache saves bandwidth.
   event.respondWith(
-    fetch(event.request)
-      .then((response) => {
-        const copy = response.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
-        return response;
-      })
-      .catch(() => caches.match(event.request))
+    caches.match(event.request).then((response) => response || fetch(event.request))
   );
 });
-
